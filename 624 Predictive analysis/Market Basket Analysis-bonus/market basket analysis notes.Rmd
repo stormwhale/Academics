@@ -1,0 +1,71 @@
+---
+title: "MBA assignment"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-04-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(arules)
+library(arulesViz)
+```
+
+```{r}
+df<- read.transactions('GroceryDataSet.csv', format = 'basket', sep = ',')
+#need to use the inspect() command to view the results in arules:
+inspect(head(df,5))
+```
+## Viewing the top 20 most frequently purchased items:
+```{r}
+itemFrequencyPlot(df, topN=10, type='absolute', horiz=TRUE) #type = 'relative' will change it to percentage rather than actual numbers
+```
+#This is to search or list all item frequency distribution:
+```{r}
+itemFrequency(df)
+
+#You can also search a specific item:
+itemFrequency(df)['whole milk']
+```
+#To search for similar words:
+```{r}
+itemFrequency(df)[grep('soup', itemLabels(df))]
+```
+
+#To mining the rules:
+supp = the support--defined as minimal % of carts must contain the all items in the rule. (Or how frequently the items must appear in the carts)
+conf = how confident that item B appears along side with item A or with a set of items
+minlen = minimal number of items in a rule (usual 2-4 is good)
+maxlen = maximum number of items in a rule
+```{r}
+rules<-apriori(df, parameter = list(supp = 0.001, conf = 0.8, minlen = 2, maxlen = 4), control = list(verbose=FALSE))
+```
+
+
+#To inspect the rules found:
+counts = number of carts that satisfy the rule
+support = fraction of basket that has the items in the rule. eg. {liquor, red/blush wine} then {bottled beer}
+confidence = how confident is this rule? (probility of this item times lift = confidence)
+coverage = fraction of the items on the left hand side(basket)
+lift = the how likely is the 'tag-along' item appear to be purchased together. eg. lift = 11.2 means bottled beer is 11.2 times more likely to be bought together with liquor, red/blush wine
+```{r}
+inspect(rules)
+```
+
+#Sorting by different criteria:
+```{r}
+inspect(sort(rules, by = 'lift', decreasing = TRUE)[1:5])
+inspect(sort(rules, by = 'count', decreasing = TRUE)[1:5])
+```
+to visualize:
+```{r}
+plot(rules, method='graph', engine='htmlwidge')
+```
+
+```{r}
+
+```
+

@@ -1,0 +1,95 @@
+---
+title: "study week 2"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-02-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(fpp3)
+```
+
+```{r}
+turn_ov<- aus_retail %>% 
+  filter(Industry == 'Newspaper and book retailing') %>% 
+  group_by(Industry) %>% 
+  index_by(Year = year(Month)) %>% 
+  summarize(Turnover = sum(Turnover))
+
+aus_economy <- global_economy |>
+  filter(Code == "AUS")
+
+turn_ov %>% 
+  left_join(aus_economy, by = "Year") %>% 
+  mutate(Adjusted_turnover = Turnover/CPI*100) %>% 
+  pivot_longer(c(Turnover, Adjusted_turnover),
+               values_to = "Turnover") %>% 
+  ggplot(aes(x=Year, y=Turnover, color=name)) +
+  geom_line()+
+  facet_grid(name~., scales='free_y')
+
+```
+
+```{r}
+#Auto-selects a lambda value:
+lamb<-turn_ov %>% 
+  features(Turnover, features = guerrero) %>% 
+  pull(lambda_guerrero)
+#To plot:
+turn_ov %>% 
+  autoplot(box_cox(Turnover, lamb))
+```
+Time components (STL method):
+```{r}
+retail <-us_employment %>% 
+  filter(Title =="Retail Trade", year(Month)>=1990) %>% 
+  select(-Series_ID)
+#Break it down to three components: Trend, seasonality, remainder
+dmcp<- retail %>% 
+  model(stl = STL(Employed))
+# To print out the components:
+components(dmcp)
+
+#To plot the trend graph by ignoring the seasonality:
+components(dmcp) %>% 
+  as_tsibble() %>%
+  autoplot(Employed, color='grey') +
+  geom_line(aes(y=trend), color = 'blue')
+
+# To quickly plot all:
+components(dmcp) %>% autoplot()
+```
+
+```{r}
+pelt_fix<- pelt %>% 
+  pivot_longer(cols = c(Hare, Lynx),
+               names_to = 'specs',
+               values_to= 'traded')
+
+pelt_dmcp<- pelt %>% 
+  model(stl = STL(Lynx))
+
+components(pelt_dmcp) %>% 
+  as_tsibble() %>% 
+  autoplot(Lynx, color='grey') +
+  geom_line(aes(y=trend), color = 'red')
+  
+```
+#Moving average
+```{r}
+#for even number of MA, use double average:
+lynx4ma<- pelt %>% 
+  mutate('Lynx4MA' = slider::slide_dbl(Lynx, mean,.before = 1, .after = 2, complete=TRUE),
+         'Lynx2-4MA' = slider::slide_dbl(Lynx, mean, .before = 1, .after = 0, complete=TRUE))
+
+lynx4ma %>% 
+  autoplot(Lynx, color='grey') +
+  geom_line(aes(y=Lynx4MA, color='red'))+
+  geom_line((aes(y=`Lynx2-4MA`, color='blue')))
+```
+
+

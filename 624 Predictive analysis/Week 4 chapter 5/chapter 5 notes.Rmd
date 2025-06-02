@@ -1,0 +1,189 @@
+---
+title: "chapter 5 notes"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(fpp3)
+```
+
+```{r}
+beer<- aus_production %>% 
+  select(Quarter, Beer)
+
+fit<- beer %>% 
+  model(trend_model = TSLM(Beer ~ trend()))
+
+fit %>% 
+  forecast(h = "3 years") %>% 
+  autoplot(beer)
+```
+```{r}
+beer <- aus_production %>% 
+  filter_index("1970 Q1" ~ "2005 Q1") %>% 
+  select(Beer)
+
+beer %>% 
+  model(MEAN(Beer)) #this is the average method to forecast
+
+beer %>% 
+  model(NAIVE(Beer)) #this is the navie method: taking the last data point as the future forecasting data. Works well in finical district
+
+#Seasonal forecast
+beer %>% 
+  model(SNAIVE(Beer ~ lag('year'))) #This is to take the last seasonal observation as the future forecast. lag argument is optional. In this example, the data is taken quarterly so the lag is needed to specify for the past year or more if another data has multi-seasonality.
+
+#Drift method:
+beer %>% 
+  model(RW(Beer ~ drift())) #This is basically drawing a line from the first point of the data and extrapolate it through the last point in a straight line.
+```
+
+```{r}
+train<- aus_production %>% 
+  filter_index("1991 Q1" ~ "2005 Q4")
+
+best_fit<- train %>% 
+  filter(!is.na(Beer)) %>%  
+  model(
+    mean = MEAN(Beer),
+    naive = NAIVE(Beer),
+    snaive = SNAIVE(Beer),
+    drift = RW(Beer ~ drift())
+  )
+beer_fc<- best_fit %>% 
+  forecast(h = 14) #14 quarters
+
+beer_fc %>% 
+  autoplot(train, level = NULL)+ #level in here signifies whether the prediction intervals (80-90%) are shown.
+  autolayer(
+    filter_index(aus_production, "2007 Q1" ~ .),
+    color = 'black'
+  ) +
+  guides(color = guide_legend(title='Forecast'))
+```
+
+```{r}
+fb_stock <- gafa_stock %>% 
+  filter(Symbol=='FB') %>% 
+  mutate(trading_day = row_number()) %>% 
+  update_tsibble(index = trading_day, regular = TRUE)
+
+fb_stock %>% 
+  model(
+    mean = MEAN(Close),
+    naive = NAIVE(Close),
+    snaive = SNAIVE(Close),
+    drift = RW(Close ~ drift())
+  ) %>% 
+  forecast(h = 365) %>% 
+  autoplot(fb_stock, level=NULL)
+```
+```{r}
+google_stock <- gafa_stock |>
+  filter(Symbol == "GOOG", year(Date) >= 2015) |>
+  mutate(day = row_number()) |>
+  update_tsibble(index = day, regular = TRUE)
+# Filter the year of interest
+google_2015 <- google_stock |> filter(year(Date) == 2015)
+# Fit the models
+google_fit <- google_2015 |>
+  model(
+    Mean = MEAN(Close),
+    `Naïve` = NAIVE(Close),
+    Drift = NAIVE(Close ~ drift())
+  )
+
+# Produce forecasts for the trading days in January 2016
+google_jan_2016 <- google_stock |>
+  filter(yearmonth(Date) == yearmonth("2016 Jan"))
+google_fc <- google_fit |>
+  forecast(new_data = google_jan_2016)
+# Plot the forecasts
+google_fc |>
+  autoplot(google_2015, level = NULL) +
+  autolayer(google_jan_2016, Close, colour = "black")
+
+```
+```{r}
+#use augment() for fitted data to get the residual values:
+augment(google_fit)
+#resid is the Closed value - fitted value
+# innov value is the transformed residual value if there is a transformation
+```
+```{r}
+aug<- google_2015 %>% 
+  model(NAIVE(Close)) %>% 
+  augment()
+
+autoplot(aug, .innov)
+
+aug %>% 
+  ggplot(aes(.innov))+
+  geom_histogram() +
+  labs(title = 'Histogram of the residuals')
+
+aug %>% 
+  ACF(.innov) %>% 
+  autoplot()
+```
+```{r}
+#produces a combination of all three plots
+google_2015 %>% 
+  model(NAIVE(Close)) %>% 
+  gg_tsresiduals()
+```
+More diagnostic plots to test for the p-value:
+```{r}
+fit<- google_2015 %>% 
+  model(RW(Close ~ drift()))
+tidy(fit) 
+#p-value <0.05 signifies the residuals are NOT white-noise(not random)
+#estimate is the coefficient value that tells you what is the change in value in a given day-time value (eg. 0.943 increase per day)
+#statistic is the deviation from zero-- the higher the statistic the more highly the residuals are not due to random chance.
+```
+
+```{r}
+#This is used to check for residual autocorrelations in the prediction
+augment(fit) %>% 
+  features(.innov, ljung_box, lag=10)
+#When p-value is > 0.05, the residuals show no autocorrelation, meaning the ups and downs of the residuals are due to randomless.
+#When p-value is < 0.05, the residuals have an autocorrelation, meaning the prediction systematically miscaptured a
+```
+forecast with decomposition:
+```{r}
+#decomposition model allows a quick way to decompose and forecast in one shot.
+
+fit_dcmp <- us_employment |>
+  model(stlf = decomposition_model(
+    STL(Employed ~ trend(window = 7), robust = TRUE),
+    NAIVE(season_adjust)
+  ))
+????
+
+
+```
+
+Accuracy:
+```{r}
+google_fit <- google_2015 |>
+  model(
+    Mean = MEAN(Close),
+    `Naïve` = NAIVE(Close),
+    Drift = RW(Close ~ drift())
+  )
+
+google_fc <- google_fit |>
+  forecast(google_jan_2016)
+```
+#Naive method with the lowest value is the most accurate
+# accuracy takes forecast data and the original data
+```{r}
+accuracy(google_fc, google_stock)
+```
+

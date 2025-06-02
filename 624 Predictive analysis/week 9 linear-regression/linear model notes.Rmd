@@ -1,0 +1,124 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-02-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+library(RANN)
+```
+
+```{r}
+chem<- ChemicalManufacturingProcess
+view(chem)
+#See which column has NA values:
+NA_values<- chem %>% is.na() %>% sum() #106
+
+#To impute with the bagged tree method:
+preprocess_chem<- preProcess(chem, method=c('scale','center','knnImpute'))
+
+#applies the imputed values to the preprocessed dataset
+imputed_chem<- predict(preprocess_chem, chem)
+
+#check for NA values:
+more_NA_values<- imputed_chem %>% is.na() %>% sum() #0
+
+print(paste('Number of NA in the df:', NA_values))
+print(paste('Number of NA in the df after imputation:', more_NA_values))
+```
+
+```{r}
+set.seed(41)
+#define predictor and response
+chem_predictors<- imputed_chem %>% select(-Yield)
+chem_response<- imputed_chem$Yield
+
+#Since the data is already pre-processed during imputation, we can go straight to splitting:
+
+#splitting training data:
+chem_train_idx<- createDataPartition(chem_response, p = 0.7, list=FALSE) 
+
+#the response argument must be a vector, not a dataframe
+chem_train_x<- chem_predictors[chem_train_idx,]
+chem_train_y<- chem_response[chem_train_idx]
+
+chem_test_x<- chem_predictors[-chem_train_idx,]
+chem_test_y<- chem_response[-chem_train_idx]
+```
+
+```{r}
+pls_model <- train(x=chem_train_x, y=chem_train_y,
+                   method = 'pls',
+                   tuneLength = 10,  # Adjusted based on visualization
+                   trControl = trainControl(method = 'cv', number = 10))
+plot(pls_model)
+```
+
+
+```{r}
+ridge_model <- train(x=chem_train_x, y=chem_train_y,
+                     method = 'glmnet',
+                     tuneGrid = expand.grid(alpha = 0, lambda = seq(0.001, 1, length = 10)),  
+                     trControl = trainControl(method = 'cv', number = 10))
+
+```
+(alpha = 0 → Ridge Regression)
+```{r}
+lasso_model <- train(x=chem_train_x, y=chem_train_y,
+                     method = 'glmnet',
+                     tuneGrid = expand.grid(alpha = 1, lambda = seq(0.001, 0.1, length = 10)),
+                     trControl = trainControl(method = 'cv', number = 10))
+```
+(alpha = 1 → Lasso Regression)
+```{r}
+elastic_net_model <- train(chem_train_x, chem_train_y,
+                           method = 'glmnet',
+                           tuneGrid = expand.grid(alpha = seq(0, 1, length = 10), lambda = seq(0.001, 0.1, length = 10)),
+                           trControl = trainControl(method = 'cv', number = 10))
+
+```
+(alpha between 0 & 1 → Elastic Net optimizes Ridge & Lasso together)
+
+
+```{r}
+results<- resamples(list(
+  pls = pls_model,
+  ridge = ridge_model,
+  lasso = lasso_model,
+  elastic = elastic_net_model))
+
+summary(results)
+```
+
+```{r}
+bwplot(results)
+dotplot(results)
+```
+
+Alternative method:
+
+```{r}
+#combine the training data back into one for predictor and response:
+chem_training_data<- data.frame(chem_train_x, Yield = chem_train_y)
+
+chem_pls_fit<- plsr(Yield~., data= chem_training_data)
+
+#To predict based on the test predictors:
+chem_ncomp<-chem_pls_tune$bestTune$ncomp
+chem_predict<- predict(chem_pls_fit, newdata=chem_test_x, ncomp = chem_ncomp)
+
+#performance analysis:
+postResample(chem_predict, chem_test_y)
+# RMSE  Rsquared       MAE 
+#0.7328591 0.5657281 0.5909947 
+
+#Residual plot:
+plot(residuals(chem_pls_tune, main='Residual plot for PLS model', ncomp = chem_ncomp))
+abline(h=0)
+```

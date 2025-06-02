@@ -1,0 +1,312 @@
+---
+title: "Chapter 6 homework linear regression"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-03-29"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+To load data:
+
+```{r, message=FALSE, warning=FALSE}
+library(AppliedPredictiveModeling)
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(lars)
+library(elasticnet)
+library(pls)
+library(corrplot)
+
+```
+
+6.2 a) glance at the data:
+
+```{r}
+data(permeability)
+glimpse(permeability)
+glimpse(fingerprints)
+```
+
+b)  The fingerprint predictors indicate the presence or absence of substruc tures of a molecule and are often sparse meaning that relatively few of the molecules contain each substructure.
+    Filter out the predictors that have low frequencies using the nearZeroVar function from the caret package.
+    How many predictors are left for modeling?
+
+    ### Ans: only 388 predictors are remaining.
+
+```{r}
+#original predictor count:
+ncol(fingerprints) #1107 columns
+
+#use nearZeroVar function to get the indices of the insignificant columns:
+nzv_idx<- fingerprints %>% nearZeroVar()
+
+#remove nzv columns:
+filtered_fingerprints<- fingerprints[, -nzv_idx]
+
+#calculate the remaining number of columns after nzv:
+ncol(filtered_fingerprints) #Only 388 predictors are remaining
+```
+
+c)  Split the data into a training and a test set, pre-process the data, and tune a PLS model.
+    How many latent variables are optimal and what is the corresponding resampled estimate of R\^2?
+
+    ### ANS: N component = 2 and the R\^2 = 0.49. PreProcessing is not needed in this dataset since the predictors are all binary data. The scale and centering are already standardized.
+
+```{r}
+#set seed:
+set.seed(123)
+
+#Split training set:
+train_idx<- createDataPartition(permeability, p = 0.7, list=FALSE) #Returns row indices
+
+train_x<- filtered_fingerprints[train_idx,] #Make sure this is filtering rows with the ','
+train_y<- permeability[train_idx]
+
+test_x<-filtered_fingerprints[-train_idx,] #Make sure this is filtering rows with the ','
+test_y<-permeability[-train_idx]
+
+```
+
+To tune, fit and predict the model:
+
+```{r}
+set.seed(123)
+#Combine the predictor and the response values into one training data:
+train_data<- data.frame(train_x, permeability = train_y)
+#Model fitting for PLS:
+pls_fingerp<- plsr(permeability~., data=train_data, validation='CV')
+
+#Auto-select the best component number based on RMSE within one standard deivation:
+fingerp_ncomp<- selectNcomp(pls_fingerp, method = "onesigma") #ncomp = 2(2 latent variables)
+
+#Alternatively, we use train() to get the full grid search of ncomp and the corresponding RMSE and R^2 for the training set:
+pls_tune<- train(train_x, train_y,
+                 method = 'pls',
+                 tuneLength = 20,
+                 trControl = trainControl(method='cv', number = 10))
+
+print(pls_tune)
+#result is the same, which ncomp = 2 is the lowest RMSE
+#R^2 from the training set is 0.446
+```
+
+(d) Predict the response for the test set.
+    What is the test set estimate of R2?
+
+    ### ANS: Test set R\^2 = 0.39. It is expected to be little lower than the training set.
+
+```{r}
+#To predict:
+fingerp_predict<- predict(pls_tune, newdata=test_x, ncomp=fingerp_ncomp)
+
+#R^2 from the test set
+postResample(fingerp_predict, test_y) #R^2= 0.39
+```
+
+(e) Try building other models discussed in this chapter.
+    Do any have better predictive performance?
+
+    ### ANS: alpha = 0.8888889 and lambda = 1 and R\^2 is 0.56, which is higher than the PLS method but the RMSE is still higher than the PLS method. The PLS method is still better in performance
+
+```{r}
+#define enetGrid range:
+enet_Grid<- expand.grid(alpha=seq(0,1,length=10),
+                        lambda = seq(0.001, 1, length = 10))
+#to find the most optimal lambda for enet():
+set.seed(1)
+enet_tune<- train(x=train_x, y=train_y,
+                  method='glmnet',
+                  tuneGrid = enet_Grid,
+                  trControl = trainControl(method='cv', number = 10))
+
+print(enet_tune)
+```
+
+To predict:
+
+```{r}
+#To fit the model:
+enet_model<- enet(x=train_x, y=train_y,
+                  lambda = enet_tune$bestTune$lambda, normalize=TRUE)
+
+#prediction:
+enet_pred<- predict(enet_model, newx=test_x,
+                    s = enet_tune$bestTune$lambda, mode = 'fraction',
+                    type = 'fit') #s should be the same value as lambda
+
+#R^2 analysis:
+postResample(enet_pred$fit, test_y)
+```
+
+This simple linear model is used as a benchmark to compare the performance for the PLS and ENET models.
+Both PLS and ENET out-performed the benchmark.
+
+```{r}
+lm_model <- lm(permeability ~., data= train_data)
+lm_pred <- predict(lm_model, newdata=as.data.frame(test_x))
+postResample(lm_pred, test_y)
+
+```
+
+(f) Would you recommend any of your models to replace the permeability laboratory experiment?
+
+    ### ANS: I would not recommend any of the models to replace the permeability laboratory experiment. This is because the R\^2 and RMSE are showing moderate performance R\^2\<\< 0.8 and the RMSE is relatively large \~11. However, these models can serve as a guideline to narrow down the experiment parameters where the desired permeability is found in these models. For example, if permeability of substance X is predicted to be 10x by A and B predictors. Researchers can design experiments with more emphasis on A and B predictors to verify the results. This is a more guided approach than just random guessing which predictor will work influence the response variable.
+
+6.3 a) Start R and use these commands to load the data
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+```
+
+(b) A small percentage of cells in the predictor set contain missing values. Use an imputation function to fill in these missing values (e.g., see Sect.3.8).
+
+```{r}
+set.seed(555)
+#define a shorter name:
+chem<- ChemicalManufacturingProcess
+
+#See which column has NA values:
+NA_values<- chem %>% is.na() %>% sum() #106
+
+#To impute with the bagged tree method:
+preprocess_chem<- preProcess(chem, method=c('scale','center','bagImpute'))
+
+#applies the imputed values to the preprocessed dataset
+imputed_chem<- predict(preprocess_chem, chem)
+
+#check for NA values:
+more_NA_values<- imputed_chem %>% is.na() %>% sum() #0
+
+print(paste('Number of NA in the df:', NA_values))
+print(paste('Number of NA in the df after imputation:', more_NA_values))
+```
+
+(c) Split the data into a training and a test set, pre-process the data, and tune a model of your choice from this chapter.
+    What is the optimal value of the performance metric?
+
+    ### ANS: the Ncomponent for the PLS model is 3. RMSE = 0.56, and R\^2 = 0.65
+
+```{r}
+set.seed(41)
+#define predictor and response
+chem_predictors<- imputed_chem %>% select(-Yield)
+chem_response<- imputed_chem$Yield
+
+#Since the data is already pre-processed during imputation, we can go straight to splitting:
+
+#splitting training data:
+chem_train_idx<- createDataPartition(chem_response, p = 0.7, list=FALSE) 
+
+#the response argument must be a vector, not a dataframe
+chem_train_x<- chem_predictors[chem_train_idx,]
+chem_train_y<- chem_response[chem_train_idx]
+
+chem_test_x<- chem_predictors[-chem_train_idx,]
+chem_test_y<- chem_response[-chem_train_idx]
+```
+
+Tuning for PLS: ncomp = 3
+
+```{r}
+set.seed(10)
+chem_pls_tune<- train(x=chem_train_x, y=chem_train_y,
+                      method = 'pls',
+                      tuneLength = 5, #the tunelength was determined after visualizing plot(chem_pls_tune) when after ncomp 10 = no improvement.
+                      trControl = trainControl(method = 'cv', number=10)
+                      )
+print(chem_pls_tune)
+
+```
+
+(d) Predict the response for the test set. What is the value of the performance metric and how does this compare with the resampled performance metric on the training set?
+
+### ANS: Comparing to the training set values: RMSE = 0.56, and R\^2 = 0.65, the predicted values are RMSE = 0.73, R\^2 = 0.57. These values are expected to be lower than the training but they do not fall short by too much. This model is still fairly capable.
+
+To fit and predict:
+
+```{r}
+chem_pred<- predict(chem_pls_tune, chem_test_x)
+postResample(chem_pred, chem_test_y)
+```
+
+Diagnostic plots:
+
+```{r}
+xyplot(chem_train_y ~ predict(chem_pls_tune),
+       type = c('p', 'g'),
+       xlab='Predicted', ylab='Observed')
+
+xyplot(resid(chem_pls_tune) ~ predict(chem_pls_tune),
+       type = c('p', 'g'),
+       xlab='Predicted', ylab='Residuals')
+```
+
+(e) Which predictors are most important in the model you have trained?
+    Do either the biological or process predictors dominate the list?
+
+    ### ANS: Manufacturing Process seems to be the bigger contributors. 7/10 of the largest contributors are of manufacturing.
+
+```{r}
+#to visualize it:
+ranking<- varImp(chem_pls_tune) #use on the tune(AKA.fitted model) parameters
+plot(ranking, top = 10)
+```
+
+(f) Explore the relationships between each of the top predictors and the response.
+    How could this information be helpful in improving yield in future runs of the manufacturing process?
+
+    ### ANS: Since the coefficients of the top predictors play a direct contribution to the Yield in a per-unit-change basis, the predictors with high coefficients such as ManufacturingProcess17 should be heavily increased in the next production and the predictors with the negative coefficients should be reduced to help boosting the production.
+
+```{r}
+#Extract the names of the top predictors:
+top_predictor_names<- ranking$importance %>% 
+  as.data.frame() %>%
+  rownames_to_column(var='predictor') %>% 
+  arrange(desc(Overall)) %>% 
+  slice_max(Overall, n = 10) %>% 
+  pull(predictor)
+
+#select the best Ncomp number:
+coef(chem_pls_tune$finalModel) %>% 
+  as.data.frame() %>% 
+  rownames_to_column('predictor') %>% 
+  rename('coefficients'='.outcome.3 comps') %>% 
+  filter(predictor %in% top_predictor_names) %>% 
+  arrange(desc(coefficients))
+```
+
+We can also check the correlations between all the predictors and the response variable visually
+
+```{r}
+#Select only the columns with the top predictors after the imputation:
+top_predictors<- imputed_chem %>% 
+  select(c(Yield, top_predictor_names))
+
+#Compute the correlations between the top ten predictors:
+correlations<- cor(top_predictors)
+
+#To visualize the correlations between the predictors:
+corrplot(correlations, order = 'hclust')
+```
+
+```{r}
+pca_model<- train(
+  x= chem_train_x,
+  y=chem_train_y,
+  method='glm',
+  trControl = trainControl(method='cv', number=10),
+  preProcess = c('center', 'scale', 'pca')
+)
+chem_pp<- predict(pca_model, chem_test_x)
+postResample(chem_pp, chem_test_y)
+```

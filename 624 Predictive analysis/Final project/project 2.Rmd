@@ -1,0 +1,188 @@
+---
+title: "project2"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-04-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(randomForest)
+library(tidyverse)
+library(caret)
+library(VIM)
+#Install these two packages if you haven't
+library(missForest)
+# install the mice package if you haven't. It also needs the 'nloptr' package as well
+library(mice)
+```
+
+Loading data:
+
+```{r}
+train<- read.csv('https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/StudentData.csv')
+new_test_data<- read.csv('https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/StudentEvaluation.csv')
+```
+
+To train split the data first:
+
+```{r}
+set.seed(199)
+#Dropping the 4 missing pH rows from the training dataset:
+train<- train %>% drop_na(PH)
+
+#We need to replace the empty spaces with NA in the brand code column:
+train$Brand.Code<- replace(train$Brand.Code, train$Brand.Code=="", NA)
+
+#We need to convert Brand.Code column to factor for imputation:
+train$Brand.Code<- as.factor(train$Brand.Code)
+
+#Train split 80/20:
+train_idx<- createDataPartition(train$PH, p = 0.8, list = FALSE)
+train_data<- train[train_idx, ]
+test_data<- train[-train_idx, ]
+
+#'train/test' are now ready for imputations:
+```
+
+kNN imputation:
+
+```{r}
+set.seed(199)
+#impute train:
+knn_imput_train<- kNN(train_data)
+#impute test:
+knn_imput_test<- kNN(test_data)
+```
+
+randomForest imputation (This takes a while to impute)
+
+```{r}
+set.seed(199)
+#Running the imputation for the training set:
+rf_imput_train<- missForest(train_data)
+#Running the imputation for the test set:
+rf_imput_test<- missForest(test_data)
+
+#Need to convert the imputed train object to dataframe:
+rf_imput_train<- as.data.frame(rf_imput_train$ximp)
+#Need to convert the imputed test object to dataframe:
+rf_imput_test<- as.data.frame(rf_imput_test$ximp)
+```
+
+MICE imputation:
+
+```{r}
+set.seed(199)
+#Running the imputation for the training set:
+mice_imput_train<- mice(train_data, m=5, maxit=50, meth='pmm', seed=100)
+#Running the imputation for the test set:
+mice_imput_test<- mice(test_data, m=5, maxit=50, meth='pmm', seed=100)
+
+
+mice_1_train<- complete(mice_imput_train, 1) #We choose the first imputed data
+mice_1_test<- complete(mice_imput_test, 1) #We choose the first imputed data
+```
+
+To check if everything is imputed:
+
+```{r}
+is.na(c('knn_imput_train', 'rf_imput_train', 'mice_1_train', 'mice_1_test', 'rf_imput_test', 'knn_imput_test')) %>% any() #False
+```
+
+To visualize the variations of the dataset after imputation through the above three methods:
+
+```{r}
+plot(density(unlist(train_data[, -1]), na.rm=TRUE),
+     main='RF imputed vs original data w/ NA removed')
+lines(density(unlist(rf_imput_train[, -1]), na.rm=TRUE),
+      col = 'red')
+legend('topright', legend = c("Original (with NA)", "randomForest Imputed (no NA)"), 
+       col = c("black", "red"), lty = 3)
+```
+
+```{r}
+plot(density(unlist(train_data[, -1]), na.rm=TRUE),
+     main='KNN imputed vs original data w/ NA removed')
+lines(density(unlist(knn_imput_train[, -1]), na.rm=TRUE),
+      col = 'red')
+legend('topright', legend = c("Original (with NA)", "kNN Imputed (no NA)"), 
+       col = c("black", "red"), lty = 3)
+```
+
+```{r}
+plot(density(unlist(train_data[, -1]), na.rm=TRUE),
+     main='MICE imputed vs original data w/ NA removed')
+lines(density(unlist(mice_1_train[, -1]), na.rm=TRUE),
+      col = 'red')
+legend('topright', legend = c("Original (with NA)", "MICE Imputed (no NA)"), 
+       col = c("black", "red"), lty = 3)
+```
+
+Running a t-test to compare all column values except for the first column for both original and imputed dataset. P-value \> 0.05, indicating the imputation did not change the overall data structure.
+
+```{r}
+t.test(train[, -1], mice_1_train[, -1]) #No difference
+t.test(train[, -1], knn_imput_train[, -1]) #Significant difference
+t.test(train[, -1], rf_imput_train[, -1])#No difference
+```
+
+Conclusion: KNN changes the dataset structure significantly while randomForest and MICE did not. We might skip KNN imputation and fit models with MICE or randomforest imputed data:
+
+To separate the predictors from the target variables:
+
+```{r}
+#Separate the PH column from the mice_1_test:
+rf_test_predictors<- rf_imput_test %>% select(-PH)
+rf_test_target<- rf_imput_test$PH
+
+#Separate the PH column from the mice_1_test:
+mice_1_test_predictors<- mice_1_test %>% select(-PH)
+mice_1_test_target<- mice_1_test$PH
+```
+
+randomForest modeling with MICE imputation: No need for scale and centering:
+```{r}
+#Tuning mtry from 1 to ncol(predictors-1):
+rf_tune<- expand.grid(mtry = seq(1, (ncol(mice_1_train)-1), by = 2))
+
+#fit model with MICE imputed data:
+rf_model_mice<-train(PH~.,
+                data = mice_1_train,
+                method = 'rf',
+                tuneGrid = rf_tune,
+                trControl = trainControl(method='cv', number=10),
+                ntree = 1000)
+```
+
+Checking importance chart from the fitted model:
+```{r}
+plot(varImp(rf_model_mice))
+```
+
+Applying the prediction:
+```{r}
+#Making prediction based on the training test data:
+rf_pred_mice<- predict(rf_model_mice, mice_1_test_predictors)
+
+#Get the best tuned hyperparameters:
+rf_model_mice$bestTune #Best model mtry = 29
+
+#Getting the residual metrics:
+postResample(rf_pred_mice, mice_1_test_target)
+#RMSE = 0.10267; R^2 = 0.662
+```
+
+
+
+# RMSE:0.13337013
+# Rsquared: 0.41897728      
+# MAE 0.09967575 
+```
+
+
+
+

@@ -1,0 +1,132 @@
+---
+title: "MBA assignment"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-04-25"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(arules)
+library(arulesViz)
+library(cluster)
+library(factoextra)
+library(tidyverse)
+library(ggplot2)
+library(tidytext)
+```
+
+```{r}
+url<- 'https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/GroceryDataSet.csv'
+df<- read.transactions(url, format = 'basket', sep = ',')
+#need to use the inspect() command to view the results in arules:
+inspect(head(df,5))
+```
+
+To mining the rules:
+
+supp = the support--defined as minimal % of carts must contain the all
+items in the rule. (Or how frequently the items must appear in the
+carts). We use 0.1%.
+
+conf = how confident that item B appears along side with item A or with
+a set of items. We use 80% confidence.
+
+minlen = minimal number of items in a rule (usual 2-4 is good)
+
+maxlen = maximum number of items in a rule
+
+```{r}
+rules<-apriori(df, parameter = list(supp = 0.001, conf = 0.8, minlen = 2, maxlen = 4), control = list(verbose=FALSE))
+```
+
+To inspect the top 10 rules based on lift: liquor,red/blush wine has the
+strongest link to be purchased with bottled beer. Lift = 11.2
+
+```{r}
+inspect(sort(rules, by = 'lift', decreasing = TRUE)[1:10])
+
+```
+
+To visualize:
+
+```{r}
+plot(rules[1:10], method='graph', engine='htmlwidge')
+```
+
+Cluster analysis:
+
+```{r}
+#convert transaction object into a matrix:
+trans_matrix<- as(df, 'matrix')
+```
+
+Compute Jaccard distance
+
+```{r}
+dissimilarity <- dist(trans_matrix, method = "binary")
+```
+
+Compute the distances to hierarchical method:
+
+```{r}
+hc <- hclust(dissimilarity, method='ward.D2')
+
+#plot the dendrogram:
+plot(hc, main = "Dendrogram of Grocery Transactions", xlab = '', sub = '')
+```
+
+Dividing the items into 4 clusters and count them: Cluster 1 has the
+biggest number of items while 2 to 4 are about the same.
+
+```{r}
+#Cut the clusters into 6:
+clusters <- cutree(hc, k=4)
+
+table(clusters)
+```
+
+Analyze clusters:
+
+```{r}
+# Add cluster labels to matrix
+clustered_data<- as.data.frame(trans_matrix)
+clustered_data$Cluster <- clusters
+
+# View average presence of items per cluster
+list1<- aggregate(. ~ Cluster, data = clustered_data, mean)
+```
+
+To visualize with the top ten items in the clusters:
+
+```{r}
+long_list1<- list1 %>% 
+  pivot_longer(cols = -1,
+               names_to = 'items',
+               values_to = 'average_presence') %>% 
+  group_by(Cluster) %>% 
+  slice_max(average_presence, n = 10) %>% 
+  mutate(items = reorder_within(items, average_presence, Cluster))
+
+long_list1 %>% ggplot(aes(y=items, x=average_presence, fill=as.factor(Cluster)))+
+  geom_bar(stat = 'identity')+
+  facet_wrap(~Cluster, scales='free_y')+
+  scale_y_reordered(labels = function(x) gsub("___\\d+", "", x))+
+  labs(title='Top 10 most frequently appear items in four clusters')
+  
+
+```
+
+visualize:
+
+```{r}
+fviz_cluster(list(data= trans_matrix, cluster = clusters))
+```

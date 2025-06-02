@@ -1,0 +1,365 @@
+---
+title: "Week 4 chapter 5"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-02-22"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(fpp3)
+```
+
+5.1 Produce forecasts for the following series using whichever of
+NAIVE(y), SNAIVE(y) or RW(y \~ drift()) is more appropriate in each
+case:
+
+Australian Population (global_economy) Only Naive and RW were used
+because there is not seasonal pattern in the dataset.
+
+```{r}
+aus_pop <- global_economy %>% 
+  filter(Country == 'Australia') %>% 
+  select(Year, Population) %>% 
+  mutate(Population = Population/1e6)
+
+aus_fit<- aus_pop %>% model(
+  Naive = NAIVE(Population),
+  RW(Population ~ drift())
+)
+aus_pop_fc<- aus_fit %>% 
+  forecast(h = '10 year')
+
+aus_pop_fc %>% 
+  autoplot(aus_pop, level = NULL)+
+  labs(title='Aus population forecast', y='Population per millions')+
+  guides(color = guide_legend(title = 'forecast models'))
+```
+
+Bricks (aus_production) SNAIVE is used due to seasonality pattern
+observed.
+
+```{r}
+aus_brick<- aus_production %>% 
+  select(Quarter, Bricks) %>% 
+  filter(!is.na(Bricks))
+
+aus_brick_fit<- aus_brick %>% 
+  model(
+    Snavie = SNAIVE(Bricks),
+    )
+
+aus_brick_fc<- aus_brick_fit %>% 
+  forecast(h = 12)
+
+aus_brick_fc %>% 
+  autoplot(aus_brick, level = NULL)+
+  labs(title = 'Aus Bricks production forecast')+
+  guides(color = guide_legend(title = 'forecast'))
+```
+
+NSW Lambs (aus_livestock) SNAIVE and RW are used since there is a
+seasonality pattern and a downward trend is observed.
+
+```{r}
+lamb<- aus_livestock %>% 
+  filter(Animal == 'Lambs', State == 'New South Wales') %>% 
+  mutate(Count = Count/1000)
+
+lambs_fit<- lamb %>% 
+  model(
+    Snavie = SNAIVE(Count),
+    RW(Count ~ drift())
+  )
+
+lambs_fc<- lambs_fit %>% 
+  forecast(h = '5 year')
+
+lambs_fc %>% 
+  autoplot(lamb, level = NULL)+
+  labs(title = 'Aus lambs count forecast', y='lambs count per thousands')+
+  guides(color = guide_legend(title = 'forecast'))
+```
+
+Household wealth (hh_budget) Only Naive and RW are used due to lack of
+seasonality from the data
+
+```{r}
+wealth<- hh_budget %>% 
+  select(Year, Wealth)
+
+wealth_fit<- wealth %>% 
+  model(
+    Naive = NAIVE(Wealth),
+    RW(Wealth ~ drift())
+  )
+
+wealth_fc<- wealth_fit %>% 
+  forecast(h = '5 year')
+
+wealth_fc %>% 
+  autoplot(wealth, level = NULL, scale='free_y')+
+  labs(title = 'household wealth of 4 countries forecasts', y='USD')+
+  guides(color = guide_legend(title = 'forecast'))
+```
+
+Australian takeaway food turnover SNAIVE and RW are used since the data
+have an upward trend. Using NAIVE might be undermining the data trend.
+
+```{r}
+turnover<- aus_retail %>% 
+  filter(Industry == 'Cafes, restaurants and takeaway food services', State== 'Australian Capital Territory') %>% 
+  select(Month, Turnover)
+
+turnover_fit<- turnover %>% 
+  model(
+    SNaive = SNAIVE(Turnover),
+    RW(Turnover ~ drift())
+  )
+
+turnover_fc<- turnover_fit %>% 
+  forecast(h = 24)
+
+turnover_fc %>% 
+  autoplot(turnover, level = NULL)+
+  labs(title = 'Australian takeaway food turnover forecasts', y='turnover number')+
+  guides(color = guide_legend(title = 'forecast'))
+```
+
+5.2 Use the Facebook stock price (data set gafa_stock) to do the
+following:
+
+a)  Produce a time plot of the series.
+
+```{r}
+#Since the trading days are irregular, a modification of the days are needed. Counted the days as the index.
+fb<- gafa_stock %>% 
+  filter(Symbol == 'FB') %>% 
+  mutate(day = row_number()) %>% 
+  select(day, Close) %>% 
+  update_tsibble(index=day, regular = TRUE)
+
+fb %>% autoplot(Close)+
+  labs(y='closing stock price', title='Facebook stock time plot')
+```
+
+b)  Produce forecasts using the drift method and plot them.
+
+```{r}
+fb_fit<- fb %>% 
+  model(RW(Close ~ drift()))
+
+fb_fc<- fb_fit %>% 
+  forecast(h = 720)
+
+fb_fc %>% 
+  autoplot(fb, level = NULL) +
+  labs(title = 'fb stock random walk forecast', x='Trading days', y='Closing price')+
+  guides(color = guide_legend(title = 'RW forecast'))
+  
+```
+
+c)  Show that the forecasts are identical to extending the line drawn
+    between the first and last observations.
+
+```{r}
+first_point<- fb %>% slice(1)
+last_point<- fb %>% slice(n())
+
+straight_line<- bind_rows(first_point, last_point)
+
+fb %>%
+  ggplot(aes(x = day, y = Close)) +
+  geom_line(color = 'black') +  # Plot the historical data
+  geom_line(data = straight_line, aes(x = c(1, nrow(fb)), y = c(first_point$Close, last_point$Close)), 
+            color = 'red', linetype = "dashed") +  # Draw the straight line
+  geom_line(data = fb_fc, aes(x=day, y=.mean), color='blue')+ #adding the forecast line
+  labs(title = 'Facebook Stock Price with RW drift forecast method',
+       x = 'Trading Days', y = 'Closing Price')
+```
+
+d)  Try using some of the other benchmark functions to forecast the same
+    data set. Which do you think is best? Why?
+
+    Ans: SNAIVE could not produce a forecast due to lack of seasonality.
+    I believe the best benchmark tool to use for this data is the RW
+    since it captures the growing trend of the fb stock in a long period
+    of time. the Naive method is only applicable for companies that are
+    stagnant.
+
+```{r}
+fb_fit2<- fb %>% 
+  model(
+    naive = NAIVE(Close),
+    snaive = SNAIVE(Close)
+  )
+fb_fit2
+fb_fc2<- fb_fit2 %>% forecast(h=720)
+
+fb_fc2 %>% 
+  autoplot(fb, level = NULL)+
+  labs(title = 'Facebook Stock Price with Straight Line from First to Last Observation',
+       x = 'Trading Days', y = 'Closing Price')
+```
+
+5.3 Apply a seasonal naïve method to the quarterly Australian beer
+production data from 1992. Check if the residuals look like white noise,
+and plot the forecasts. The following code will help. What do you
+conclude?
+
+Ans: The residuals look mostly center around the 0, indicating not much
+of a sudden peak or trough for outliers. The ACF plot almost confirms
+majority of the lags are in range with one except at lag 4. The residual
+histogram also shows a relatively normal distribution. This is fair to
+conclude that the residuals are most likely white-noise.
+
+```{r}
+recent_production <- aus_production |>
+  filter(year(Quarter) >= 1992)
+fit <- recent_production |> model(SNAIVE(Beer))
+# Look at the residuals
+fit |> gg_tsresiduals()
+# Look a some forecasts
+fit |> forecast() |> autoplot(recent_production)
+
+```
+
+5.4 Repeat the previous exercise using the Australian Exports series
+from global_economy and the Bricks series from aus_production. Use
+whichever of NAIVE() or SNAIVE() is more appropriate in each case.
+
+Australian Exports series from global_economy:
+
+Ans: NAIVE method is used since seasonality is lacking. The residuals
+are normally distributed and the residual plots revolve around 0. The
+Ljung_box test also shows p-value \> 0.05, indicating no autocorrelation
+observed. Variations are due to white-noise only.
+
+```{r}
+aus_export<- global_economy %>% 
+  filter(Country =='Australia') %>% 
+  select(Year, Exports)
+
+aus_fit<- aus_export %>% 
+  model(naive=NAIVE(Exports))
+
+aus_fit %>% gg_tsresiduals()
+#check the p-value
+augment(aus_fit) %>% features(.innov, ljung_box, lag=10)
+#plotting the graph
+aus_fit %>% forecast(h='5 year') %>% 
+  autoplot(aus_export, level=NULL)+
+  labs(title = 'Aus exports forecast')
+```
+
+Bricks series from aus_production Ans: SNAIVE is picked due to complex
+seasonality is seen. The diagnostic plots show that the residuals are
+left skewed from the histogram. ACF plot shows seasonal pattern of
+autocorrelation, and the residual plot also shows outliers. The
+residuals from this fitting are unlikely to be due to white noise. The
+ljung_box test also confirms with a near or 0 p-value for the residual
+autocorrelation.
+
+```{r}
+aus_brick<- aus_production %>% 
+  select(Quarter, Bricks) %>% 
+  filter(!is.na(Bricks))
+
+aus_brick_fit<- aus_brick %>% 
+  model(Snavie = SNAIVE(Bricks))
+#diagnostic plots:
+aus_brick_fit %>% gg_tsresiduals()
+#ljung_box test:
+augment(aus_brick_fit) %>% features(.innov, ljung_box, lag=10)
+#Forecasted another 12 quarters
+aus_brick_fc<- aus_brick_fit %>% 
+  forecast(h = 12)
+
+aus_brick_fc %>% 
+  autoplot(aus_brick, level = NULL)+
+  labs(title = 'Aus Bricks production forecast')+
+  guides(color = guide_legend(title = 'forecast'))
+```
+
+5.7 For your retail time series (from Exercise 7 in Section 2.10): a)
+Create a training dataset consisting of observations before 2011 using
+
+```{r}
+myseries <- aus_retail |>
+  filter(`Series ID` == sample(aus_retail$`Series ID`,1))
+
+myseries_train <- myseries |>
+  filter(year(Month) < 2011)
+```
+
+b)  Check that your data have been split appropriately by producing the
+    following plot.
+
+```{r}
+autoplot(myseries, Turnover, color='green') +
+  autolayer(myseries_train, Turnover, color= 'red')
+```
+
+c)  Fit a seasonal naïve model using SNAIVE() applied to your training
+    data (myseries_train).
+
+```{r}
+fit <- myseries_train |>
+  model(snaive = SNAIVE(Turnover))
+```
+
+d)  Check the residuals. Do the residuals appear to be uncorrelated and
+    normally distributed?
+
+    Ans: The residuals look correlated and are not normally distributed.
+
+```{r, warning=FALSE}
+fit %>% 
+  gg_tsresiduals()
+```
+
+e)  Produce forecasts for the test data
+
+```{r}
+fc_data<- myseries %>% 
+  filter(year(Month)>2011)
+
+fc<- fit %>% 
+  forecast(new_data = anti_join(myseries, myseries_train))
+
+fc %>% autoplot(myseries)
+```
+
+f)  Compare the accuracy of your forecasts against the actual values.
+
+    Ans: The forecasted data is not very accurate when compared to the
+    actual data. First, the plot shows almost no overlapping region
+    between the observed data(black lines) and the forecasted
+    data(purple). Second, all the forecast measurements are very big
+    numbers when compared to the training data measurements. The SNAIVE
+    method does not fit well with the model presented.
+
+```{r}
+fit %>%  accuracy() #training
+fc %>% accuracy(myseries) #forecast value
+```
+
+g)  How sensitive are the accuracy measures to the amount of training
+    data used?
+
+Ans: The sensitivity of the accuracy measurement is relative important
+to the amount of training data used. Typically accuracy improves as the
+amount of training data is available for reference. In this case, the
+forecasting method used is of benchmark purposes and the amount of
+training data is slightly independent of the outcome due to how the
+SNAIVE method takes the last seasonality patterns and replicate them. In
+real forecasting models, the amount of training data will impact the
+accuracy of the model more significantly.

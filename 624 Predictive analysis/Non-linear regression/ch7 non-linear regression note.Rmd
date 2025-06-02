@@ -1,0 +1,289 @@
+---
+title: "regression trees"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-04-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning =FALSE, message=FALSE}
+library(caret)
+library(tidyverse)
+library(nnet)
+library(earth)
+```
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+```
+
+```{r}
+set.seed(300)
+chem<- ChemicalManufacturingProcess
+imputed_chem<- preProcess(chem, method='knnImpute')
+imputed_chem<- predict(imputed_chem, chem)
+chem_predictors<- imputed_chem %>% select(-Yield)
+chem_response<- imputed_chem$Yield
+
+train_idx<- createDataPartition(chem_response, p =0.7, list=FALSE)
+chem_train_x<- chem_predictors[train_idx, ]
+chem_train_y<- chem_response[train_idx]
+
+chem_test_x<- chem_predictors[-train_idx, ]
+chem_test_y<- chem_response[-train_idx]
+```
+
+Neural Network: nnet is a basic learner package.
+**Data should all be on the same scale: use scale + center preprocessing
+```{r}
+#find all predictors with above 0.75 correlation and remove them:
+high_cor<- findCorrelation(cor(chem_train_x), cutoff = 0.75)
+
+train_x_nnet<- chem_train_x[, -high_cor]
+test_x_nnet<- chem_test_x[, -high_cor]
+
+#Set tune_parameters:
+nnet_grid<- expand.grid(.decay = c(0, 0.01, 0.1), #large regression coefficient models = larger errors weight to smooth out the prediction, reducing overfitting This is called lambda = 0 to 0.1
+                        .size = c(1:10), #This is the number of hidden units
+                        .bag = FALSE)
+
+nnet_tuned_model<- caret::train(chem_train_x,
+                         chem_train_y,
+                         method = 'avNNet',
+                         trControl = trainControl(method = 'cv', number = 10),
+                         tuneGrid = nnet_grid,
+                         #preProcess = c('center', 'scale'), if it is not done previously
+                         linout = TRUE, #This is for regression models
+                         trace = FALSE, #This is for printing out extra information
+                         MaxNWts = 10 * (ncol(train_x_nnet)+1) + 10 + 1,
+                         maxit= 500) #This is for printing out extra information
+
+plot(nnet_tuned_model)
+```
+predict:
+```{r}
+nnet_predict<- predict(nnet_tuned_model, chem_test_x)
+postResample(nnet_predict, chem_test_y)
+```
+
+Neural network with RSNNS:
+```{r}
+library(RSNNS)
+```
+
+
+```{r}
+rsnns_grid<- expand.grid(.size = c(5:20)) #only can tune size (Number of hidden units)
+rsnns_model<- caret::train(
+  x = chem_train_x,
+  y = chem_train_y,
+  method = 'mlp',
+  trControl = trainControl(method = 'cv', number = 10),
+  tuneGrid = rsnns_grid,
+  linOut = TRUE,
+  maxit = 500,
+  MaxNWts = 1000,
+  learnFuncParams = c(0.01, 0.9)
+)
+
+plot(rsnns_model)
+summary(rsnns_model)
+```
+
+```{r}
+rsnns_predict<- predict(rsnns_model, chem_test_x)
+postResample(rsnns_predict, chem_test_y)
+```
+
+residual plot:
+```{r}
+xyplot(chem_train_y ~ predict(rsnns_model),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'RSNNS: observed vs predicted',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)})
+
+xyplot(resid(rsnns_model) ~ predict(rsnns_model),
+       type = c('p','g'),
+       xlab = 'predicted',
+       ylab='observed',
+       main = 'residual vs plot',
+       panel = function(x, y, ...) {
+         panel.xyplot(x, y, ...)
+         panel.abline(a = 0, b = 0, col = 'red', lty = 2)
+       })
+```
+
+
+
+MARS:
+-The main point here is the hockystick function that determines the "knot", where the data points start to become non-linear. The piecewise linear plots are made. 
+-Mathematically = the hinge function to find the knot.
+-Each predictor can be viewed independently with the response variable since its additive.
+-**very little preprocessing is needed. data transformation and filtering is not needed.
+```{r}
+mars_grid<- expand.grid(.degree = 1:3, #The degree of interaction between features: 1st = f+f; 2nd = f*f 3rd = three way interaction
+                        
+                        .nprune = 2:20) #This is number of terms to retain after pruning: MARS keeps all the terms (the left and right function) before pruning.
+
+mars_tune<- caret::train(chem_train_x,
+                  chem_train_y,
+                  method = 'earth',
+                  tuneGrid = mars_grid,
+                  trControl = trainControl(method='cv', number = 10))
+
+summary(mars_tune)
+plot(mars_tune)
+plotmo(mars_tune$finalModel)
+```
+to predict:
+```{r}
+mars_chem_pred<- predict(mars_tune, chem_test_x)
+postResample(mars_chem_pred, chem_test_y)
+varImp(mars_tune)
+```
+
+```{r}
+xyplot(chem_train_y ~ predict(mars_tune),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'MARS: observed vs predicted',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)})
+
+xyplot(resid(mars_tune) ~ predict(mars_tune),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'MARS: Residual',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 0, col = 'red', lty = 2)})
+```
+Support Vector Machine:
+-**scale and center the data points first
+-The main idea is to estimate a hyperplane that can separate the data points into classification or regression.
+-The support data points are being brought up to higher dimension to find the soft-margin, an area where mis-classification is allowed to a degree (e constant).
+-Kernels are designed for non-linear dataset:
+  1) svmLinear (for linear model)
+  2) svmRadial (estimate the soft-margin in infinity dimension)
+    two parameters:
+    sigma = influence of a single point to other points (low signma = overfitting/ high =                       underfitting)
+    Cost = penality for the mis-classification in the soft-margin (low = softer margin/ high = rough            and more specific margine--overfitting)
+  3) svmPoly (estimate hyperplane using polynomial function--non-linear functions that are modeled                by higher dimension functions such as x^3, x^7)
+     parameter = d for degree
+```{r}
+library(kernlab)
+
+```
+
+```{r}
+svm_tune_radial<- train(chem_train_x,
+                 chem_train_y,
+                 method = 'svmRadial',
+                 preProcess = c('center', 'scale'),
+                 tuneLength = 10,
+                 trControl = trainControl(method = 'cv', number = 10))
+
+svm_tune_poly<- train(chem_train_x,
+                 chem_train_y,
+                 method = 'svmPoly',
+                 preProcess = c('center', 'scale'),
+                 tuneLength = 2,
+                 trControl = trainControl(method = 'cv', number = 10))
+
+svm_tune_linear<- train(chem_train_x,
+                 chem_train_y,
+                 method = 'svmLinear',
+                 preProcess = c('center', 'scale'),
+                 tuneLength = 10,
+                 trControl = trainControl(method = 'cv', number = 10))
+
+
+```
+```{r}
+svm_rad_pred<- predict(svm_tune_radial, chem_test_x)
+svm_poly_pred<- predict(svm_tune_poly, chem_test_x)
+svm_linear_pred<- predict(svm_tune_linear, chem_test_x)
+
+list(rad = postResample(svm_rad_pred, chem_test_y),
+     poly = postResample(svm_poly_pred, chem_test_y),
+     linear = postResample(svm_linear_pred, chem_test_y))
+
+xyplot(chem_train_y ~ predict(svm_tune),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'svm_radial: observed vs predicted',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)})
+
+xyplot(resid(mars_tune) ~ predict(svm_tune),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'svm_radial: Residual',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 0, col = 'red', lty = 2)})
+```
+e1071 can only show plots from 2D up to 3D and classifications only. Regressions = no go
+```{r}
+library(e1071)
+preP<- preProcess(chem_train_x, method = c('center', 'scale', 'pca'))
+
+chem_2_train_x<- predict(preP, chem_train_x)
+
+
+chem_train_x2<- chem_2_train_x[, 1:2]
+
+svm_vis<- svm(chem_train_y ~., data=data.frame(chem_train_x2, chem_train_y),
+                     kernel = 'polynomial',
+                     degree = 3)
+
+plot(svm_vis, data = data.frame(chem_train_x2, chem_train_y),
+     xlab = "PC1", ylab = "PC2", main = "SVM Poly Kernel on Top 2 PCs")
+```
+```{r}
+# Create a binary target for plotting (e.g., high vs low response)
+chem_binary_y <- as.factor(ifelse(chem_train_y > median(chem_train_y), "High", "Low"))
+
+# Refit an SVM classifier
+svm_vis <- svm(chem_binary_y ~ ., data = data.frame(chem_train_x2, chem_binary_y),
+               kernel = "polynomial", degree = 3)
+
+# Now plot will work!
+plot(svm_vis, data = data.frame(chem_train_x2, chem_binary_y),
+     xlab = "PC1", ylab = "PC2", main = "SVM Poly Kernel (Classification Simulation)")
+
+
+```
+KNN:
+The idea is to use distance between data points to classify or create a regression model:
+-need to center and scale data points
+-small K = overfit / large K = underfit
+-KNN does not work well when predictors have no correlations with the response
+-Can use nearZeroVar() to weed out the predictors that have no relations
+```{r}
+knn_tune<- train(x = chem_train_x,
+                 y = chem_train_y,
+                 method = 'knn',
+                 preProcess = c('scale', 'center', 'nzv', 'pca'),
+                 trControl=trainControl(method = 'cv', number = 10),
+                 tuneGrid = data.frame(.k = 1:20))
+
+knn_pred<- predict(knn_tune, chem_test_x)
+postResample(knn_pred, chem_test_y)
+```
+

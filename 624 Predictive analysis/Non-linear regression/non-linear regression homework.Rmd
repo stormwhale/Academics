@@ -1,0 +1,318 @@
+---
+title: "chapter 7 nonlinear regression hw"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-04-10"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(mlbench)
+library(earth)
+library(RSNNS)
+library(corrplot)
+library(caret)
+```
+
+```{r}
+set.seed(200)
+training_data<- mlbench.friedman1(200, sd =1)
+training_data$x<- data.frame(training_data$x)
+featurePlot(training_data$x, training_data$y)
+
+#create a test dataset:
+test_data<- mlbench.friedman1(5000, sd = 1)
+test_data$x<- data.frame(test_data$x)
+
+#define the 10 fold cross-validation method:
+cv<-trainControl(method = 'cv', number = 10)
+```
+
+7.2 Which models appear to give the best performance?
+Does MARS select the informative predictors (those named X1–X5)?
+
+### ANS: MARS is the best fitted model with R\^2 around 0.93 and the RMSE 1.28, which is the lowest. According to the importance map, MARS ranked X1, 4, 2 ,5 ,3 as the most important predictors but X3 had 0 importance. Therefore, we can conclude that X1-5 are all being utilized.
+
+\*\*KNN example from the textbook, which will be used as the benchmark:
+
+```{r}
+knn_tune<- caret::train(x = training_data$x,
+                 y = training_data$y,
+                 method = 'knn',
+                 preProcess = c('scale', 'center'),
+                 tuneLength = 10)
+
+```
+
+To predict with KNN:
+
+```{r}
+knn_pred<- predict(knn_tune, test_data$x)
+postResample(knn_pred, test_data$y)
+```
+
+Neural network with RSNNS:
+
+```{r}
+rsnns_grid<- expand.grid(.size = 5:20)
+
+rsnns_tune<- caret::train(x = training_data$x,
+                   y = training_data$y,
+                   method = 'mlp',
+                   preProcess = c('scale', 'center'),
+                   trControl = cv,
+                   tuneGrid = rsnns_grid,
+                   linout = TRUE,
+                   maxit = 500,
+                   MaxNWts = 1000,
+                   learnFuncParams = c(0.01, 0.9)
+                   )
+```
+
+RSNNS prediction:
+
+```{r}
+rsnns_pred<- predict(rsnns_tune, test_data$x)
+postResample(rsnns_pred, test_data$y)
+```
+
+MARS:
+
+```{r}
+#MARS tuning:
+set.seed(123)
+mars_grid<- expand.grid(.degree = 1:3,
+                        .nprune = 2:20)
+
+mars_tune<- caret::train(x = training_data$x,
+                  y = training_data$y,
+                  method = 'earth',
+                  trControl = cv,
+                  tuneGrid = mars_grid,
+                  preProcess = c('scale', 'center'))
+plot(varImp(mars_tune))
+```
+
+MARS prediction:
+
+```{r}
+mars_predict<- predict(mars_tune, test_data$x)
+postResample(mars_predict, test_data$y)
+```
+
+SVM:
+
+```{r}
+svm_radial<- caret::train(x = training_data$x,
+                          y = training_data$y,
+                          method = 'svmRadial',
+                          tuneLength = 10,
+                          trControl = cv)
+
+svm_poly<- caret::train(x = training_data$x,
+                          y = training_data$y,
+                          method = 'svmPoly',
+                          tuneLength = 3,
+                          trControl = cv)
+```
+
+SVM prediction:
+
+```{r}
+svm_rad_pred<- predict(svm_radial, test_data$x)
+svm_poly_pred<- predict(svm_radial, test_data$x)
+postResample(svm_rad_pred, test_data$y)
+postResample(svm_poly_pred, test_data$y)
+```
+
+To put all models side by side comparison:
+
+```{r}
+list(knn = postResample(knn_pred, test_data$y),
+     rsnns = postResample(rsnns_pred, test_data$y),
+     MARS = postResample(mars_predict, test_data$y),
+     svm_rad = postResample(svm_rad_pred, test_data$y),
+     svm_poly = postResample(svm_poly_pred, test_data$y))
+```
+
+7.5 Exercise 6.3 describes data for a chemical manufacturing process.
+Use the same data imputation, data splitting, and pre-processing steps as before and train several nonlinear regression models.
+
+(a) Which nonlinear regression model gives the optimal re-sampling and test set performance?
+
+    ### Ans: The SVM radial model has the best re-sampling and test validation performance. They are RMSE = 0.638, Rsquared=0.644; RMSE = 0.552;Rsquared =0.65 for re-sample and test validation, respectively.
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+```
+
+Train split the data:
+
+```{r}
+set.seed(123)
+#checking for missing data:
+is.na(ChemicalManufacturingProcess) %>% sum() #106 missing data
+
+#impute the data with knn:
+imputed_data<- preProcess(ChemicalManufacturingProcess, method = 'knnImpute')
+
+#apply to the dataset:
+imputed_chem<- predict(imputed_data, ChemicalManufacturingProcess)
+imputed_chem %>% is.na() %>% sum() # 0 missing data
+
+#spliting data in 70-30:
+chem_train_idx<- createDataPartition(imputed_chem$Yield, p = 0.7, list=FALSE)
+
+#training dataset
+chem_train_x<- imputed_chem[chem_train_idx, ] %>% select(-Yield)
+chem_train_y<- imputed_chem$Yield[chem_train_idx]
+
+#testing dataset:
+chem_test_x<- imputed_chem[-chem_train_idx, ] %>% select(-Yield)
+chem_test_y<- imputed_chem$Yield[-chem_train_idx]
+```
+
+KNN:
+
+```{r}
+set.seed(43)
+knn_model<- caret::train(x = chem_train_x,
+                  y = chem_train_y,
+                  method = 'knn',
+                  preProcess = c('scale', 'center'),
+                  trControl = cv,
+                  tuneGrid = data.frame(.k = 1:20))
+
+#to check the re-sampling metrics:
+knn_model
+
+#to predict:
+knn_model_pred<- predict(knn_model, chem_test_x)
+postResample(knn_model_pred, chem_test_y)
+```
+
+SVM radial:
+
+```{r}
+set.seed(43)
+#tuning parameters:
+svm_tune<- expand.grid(
+  sigma = c(0.01, 0.1, 1),
+  C = c(1:10))
+
+svm_model<- caret::train(
+  x = chem_train_x,
+  y = chem_train_y,
+  method = 'svmRadial',
+  trControl = cv,
+  tuneGrid = svm_tune,
+  preProcess = c('scale', 'center')
+  )
+
+#to check the re-sampling metrics:
+svm_model
+
+#to predict:
+svm_model_pred<- predict(svm_model, chem_test_x)
+postResample(svm_model_pred, chem_test_y)
+```
+
+MARS:
+
+```{r}
+set.seed(43)
+mars_grid2<- expand.grid(.degree = 1:3,
+                         .nprune = 2:20)
+
+mars_model<- caret::train(
+  x = chem_train_x,
+  y = chem_train_y,
+  method = 'earth',
+  trControl = cv,
+  tuneGrid = mars_grid2,
+  preProcess = c('scale', 'center')
+  )
+#to check the re-sampling metrics:
+mars_model$finalModel
+
+#to predict:
+mars_model_pred<- predict(mars_model, chem_test_x)
+postResample(mars_model_pred, chem_test_y)
+```
+
+neural network:
+
+```{r}
+set.seed(43)
+rsnns_grid2<- expand.grid(.size = 5:20)
+
+rsnns_model<- caret::train(x = chem_train_x,
+                   y = chem_train_y,
+                   method = 'mlp',
+                   preProcess = c('scale', 'center'),
+                   trControl = cv,
+                   tuneGrid = rsnns_grid2,
+                   linout = TRUE,
+                   maxit = 500,
+                   MaxNWts = 1000,
+                   learnFuncParams = c(0.01, 0.9)
+                   )
+rsnns_model
+
+RSNNS_model_pred<- predict(rsnns_model, chem_test_x)
+postResample(RSNNS_model_pred, chem_test_y)
+```
+
+All residuals combined:
+
+```{r}
+list(knn = postResample(knn_model_pred, chem_test_y),
+     rsnns = postResample(RSNNS_model_pred, chem_test_y),
+     MARS = postResample(mars_model_pred, chem_test_y),
+     svm_rad = postResample(svm_model_pred, chem_test_y))
+```
+
+(b) Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the list? How do the top ten important predictors compare to the top ten predictors from the optimal linear model?
+
+    ### Ans: Variable 13, 17, 32, 09, 06, 03, 36, 06, 12, 02 are the most important variables in the non-linear model. The ManufacturingProcess variables predominate the chart. The top ten linear regression model (PLS) and the SVM model overlaps in 13, 17, 32, 09, 06, 03, 36. The only unique predictor in the SVM model is the Biomaterial12.
+
+```{r}
+plot(varImp(svm_model), 
+     top = 10,
+     main='SVM-radial importance')
+
+```
+
+(c) Explore the relationships between the top predictors and the response for the predictors that are unique to the optimal nonlinear regression model. Do these plots reveal intuition about the biological or process predictors and their relationship with yield?
+
+    ### ANS: The only predictor unique to the SVM model is the BioMaterial 12. It has a positive coefficient to the response variable, meaning with increases in BioMaterial12 the response variable will also increase proportionally. However, the importance of it is ranked #9. MP 13 has the strongest correlation to the response variable according to SVM. These correlation coefficient plots help us to visualize and further narrow down what predictors can help to either boost or reduce the effect of the response variable. In the corrplot shown below, the Biomaterial predictors all have positive correlations to the Yield whereas Manufacturing has a varying degree of correlation between positive and negative correlations. This might be an indication that BioMaterial has an overall positive correlation to the Yield than the manufacturing predictors.
+
+We will check the top predictor correlations
+
+```{r}
+#Select important predictor names:
+top_pre_names<- varImp(svm_model)$importance %>% 
+  as.data.frame() %>% 
+  rownames_to_column('predictors') %>% 
+  slice_max(order_by = Overall, n = 10) %>% 
+  pull(predictors)
+
+#select the column of the predictors and the response variable column:
+correlations<- imputed_chem %>% 
+  select(c('Yield', top_pre_names)) %>% 
+  cor()
+
+#visualizing the predictor correlations:
+corrplot(correlations, order = 'hclust')
+```

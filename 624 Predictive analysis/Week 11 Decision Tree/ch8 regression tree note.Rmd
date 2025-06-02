@@ -1,0 +1,350 @@
+---
+title: "regression trees"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-04-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning =FALSE, message=FALSE}
+library(caret)
+library(tidyverse)
+```
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+```
+
+```{r}
+set.seed(300)
+chem<- ChemicalManufacturingProcess
+
+#Train splite:
+train_idx<- createDataPartition(chem$Yield, p =0.8, list=FALSE)
+chem_train<- chem[train_idx, ]
+chem_test<-  chem[-train_idx, ]
+
+#impute train:
+imputed_chem_train<- preProcess(chem_train, method=c('center', 'scale', 'knnImpute'))
+imputed_chem_train_data<- predict(imputed_chem_train, chem_train)
+
+#impute test:
+imputed_chem_test<- preProcess(chem_train, method=c('center', 'scale', 'knnImpute'))
+imputed_chem_test_data<- predict(imputed_chem_test, chem_test)
+
+```
+
+To build a single tree:
+```{r}
+library(rpart.plot)
+library(rpart)
+set.seed(198)
+rpart_tune<- train(x=chem_train_x,
+                   y=chem_train_y,
+                   method = 'rpart2',
+                   tuneLength = 10,
+                   trControl = trainControl(method='cv', number=10))
+#To extract the final model of the tree
+rpart_tree<- rpart_tune$finalModel
+```
+
+for rpart tree visualization:
+```{r}
+library(rpart.plot)
+#convert the tree model to party object
+rpart.plot(rpart_tree, type = 1, extra = 101, fallen.leaves = TRUE)
+```
+
+```{r}
+test_tree<- predict(rpart_tune, chem_test_x)
+
+postResample(test_tree, chem_test_y)
+```
+M5 Trees:
+
+M5 tree actually tunes over to test rule-base as well. It will automatically test for pruning and smoothing.
+
+rule-base tree chooses only one rule from each tree model with the most coverage. Removes that dataset and repeat the steps until all training data are covered by at least one rule. The ranked collective rules have different linear regression model in each one. When a new data is entered, the linear regression mode that associates with the first rule that identifies with the new data is used for prediction.
+```{r}
+library(RWeka)
+set.seed(4550)
+#M5 tree(rule and no rule)
+m5tree<- train(Yield~.,
+               data = imputed_chem_train_data,
+               method = 'M5',
+               trControl = trainControl(method='cv'),
+               control = Weka_control(M=10))
+#M5 rule-based ONLY
+m5rules<- train(Yield~.,
+               data = imputed_chem_train_data,
+               method = 'M5Rules',
+               trControl = trainControl(method='cv'),
+               control = Weka_control(M=10))
+
+```
+
+visualize the text structures only
+```{r}
+final_m5tree<- m5tree$finalModel
+final_m5tree
+```
+
+```{r}
+final_m5rule<- m5rules$finalModel
+final_m5rule
+```
+To predict:
+```{r}
+#M5 tree only
+m5tree_pred<- predict(m5tree, chem_test_x)
+postResample(m5tree_pred, chem_test_y)
+
+#M5 rule-based only
+m5rule_pred<- predict(m5rules, chem_test_x)
+postResample(m5rule_pred, chem_test_y)
+```
+M5Rule diagnostic:
+```{r}
+xyplot(chem_train_y ~ predict(m5rules),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'M5Rule: observed vs predicted',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+#calculate the residuals
+
+xyplot(resid(m5rules) ~ predict(m5rules),
+       type=c('p', 'g'),
+       xlab = 'residuals', 
+       ylab = 'observed',
+       main = 'M5Rule: resid vs predicted',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 0, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+```
+
+
+Bagged tree
+NOTE train() from caret does not have the tuning parameters for nbagg
+
+nbagg = control how many baggings are done.
+bagging = how many 'bags' or samples of randomly selected training data points are chosen with replacement(training data points are allowed to pick more than once
+)
+```{r}
+set.seed(500)
+library(ipred)
+baggedTree<- ipredbagg(chem_train_y, chem_train_x, nbagg=45) #Default at largest tree possible
+#nbagg = 10 can add to the function above for number of bootstrapping.
+#Usually bootstrapping < 10 is best
+
+baggedTree$mtrees[1] #Tree #1
+```
+
+```{r}
+chem_bagged<- predict(baggedTree, chem_test_x)
+
+postResample(chem_bagged, chem_test_y)
+
+xyplot(chem_train_y ~ predict(baggedTree),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'Bagged tree: observed vs predicted',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+#calculate the residuals
+residual<- chem_train_y - chem_bagged
+xyplot(residual ~ predict(baggedTree),
+       type=c('p', 'g'),
+       xlab = 'residuals', 
+       ylab = 'observed',
+       main = 'Bagged tree: resid vs predicted',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 0, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+```
+
+
+RandomForest:
+
+-It uses a combination of bootstrap aggregation for sampling plus mtry(see below) to minimize overfitting and reduces variance. No need to scale and center the data points since low variance predictors will never be considered.
+
+-mtry = number of predictors are allowed to be selected in each node. (creates randomness among the trees)
+
+-ntree = number of trees created. Usually use at least 1000
+```{r}
+library(randomForest)
+
+rf_model<- randomForest(chem_train_x, chem_train_y,importance = TRUE, 
+                        ntrees= 1000)
+#To tune the mtry if wanted:
+
+grid <- expand.grid(mtry = seq(1, ncol(chem_train_x), by = 50))
+
+chem_rf<- train(chem_train_x,
+                chem_train_y,
+                method = 'rf',
+                trControl = trainControl(method='cv', number=10),
+                ntree=1000, 
+                tuneGrid = grid
+                )
+
+chem_rf_pred<- predict(chem_rf, chem_test_x)
+
+postResample(chem_rf_pred, chem_test_y)
+
+```
+
+RandomForest plots:
+```{r}
+xyplot(chem_train_y ~ predict(chem_rf),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'randomForest',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+
+xyplot(resid(chem_rf) ~ predict(chem_rf),
+       type=c('p', 'g'),
+       xlab = 'residuals', 
+       ylab = 'observed',
+       main = 'randomForest',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 0, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+```
+
+Boosted Tree:
+
+```{r}
+library(gbm)
+gbm_model<- gbm.fit(chem_train_x,
+                    chem_train_y,distribution = 'gaussian') #gaussian = for continuous response
+
+#Or to tune:
+gbm_grid<- expand.grid(interaction.depth = seq(1,7, by = 2),
+                       n.trees = seq(100, 1000, by = 50),
+                       shrinkage = c(0.01, 0.1), #restricts how much is a new tree considered in the ensemble
+                       n.minobsinnode=c(5,10,15)) #minobsinnode = minimal instances for terminal nodes
+
+gbm_tune<- train(chem_train_x,
+                 chem_train_y,
+                 method='gbm',
+                 tuneGrid = gbm_grid,
+                 trControl = trainControl(method='cv', number=10),
+                 verbose = FALSE) #verbose FALSE is to bypass the info. produced from the model
+gbm_tune
+```
+
+To predict
+```{r}
+gbm_model
+plot(gbm_tune)
+
+gbm_model_predict<- predict(gbm_model, chem_test_x)
+gbm_tune_predict<- predict(gbm_tune, chem_test_x)
+
+postResample(gbm_model_predict, chem_test_y)
+postResample(gbm_tune_predict, chem_test_y)# the tuned version produces much better RMSE
+```
+To visualize the residual plot:
+```{r}
+xyplot(chem_train_y ~ predict(gbm_tune),
+       type=c('p', 'g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'GBM',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+
+xyplot(resid(gbm_tune) ~ predict(gbm_tune),
+       type=c('p', 'g'),
+       xlab = 'residuals', 
+       ylab = 'observed',
+       main = 'GBM',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 0, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+```
+
+Cubist:
+linear regression models at terminal leaves
+
+2 tuning parameters:
+
+-committees: boosting method (each model tries to correct the residuals of the previous model). Basically it controls how many models to add to the ensemble.
+
+-neighboring (smoothing): similar to KNN method. Look for the K-nearest neighboring data points and average their predictions as the smoothing method. 
+
+```{r}
+library(Cubist)
+
+#To tune it:
+cub_tune<-expand.grid(committees = seq(1, 10, by = 1),
+                      neighbors = seq(1, 9, by = 1))
+
+cub_model<- train(chem_train_x,
+                  chem_train_y,
+                  method = 'cubist',
+                  tuneGrid = cub_tune,
+                  trControl = trainControl(method = 'cv', number = 10))
+
+plot(cub_model)
+```
+To predict:
+```{r}
+cub_predict<- predict(cub_model, chem_test_x)
+
+postResample(cub_predict, chem_test_y)
+```
+Residual plot:
+```{r}
+xyplot(chem_train_y ~ predict(cub_model),
+       type = c('p','g'),
+       xlab = 'predicted', 
+       ylab = 'observed',
+       main = 'cubist',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 1, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+
+xyplot(resid(cub_model) ~ predict(cub_model),
+       type = c('p', 'g'),
+       xlab = 'predicted',
+       ylab = 'observed',
+       main = 'cubist',
+       panel = function(x, y, ...) {
+           panel.xyplot(x, y, ...)  
+           panel.abline(a = 0, b = 0, col = 'red', lty = 2)  # Add a reference line (y = x)
+       })
+```
+Combination of all models and their RMSEs:
+```{r}
+list(cubist = postResample(cub_predict, chem_test_y),
+     Gbm = postResample(gbm_tune_predict, chem_test_y),
+     randomForest = postResample(chem_rf_pred, chem_test_y),
+     Bagged = postResample(chem_bagged, chem_test_y),
+     M5Rule = postResample(m5rule_pred, chem_test_y),
+     single_tree = postResample(test_tree, chem_test_y))
+```
+

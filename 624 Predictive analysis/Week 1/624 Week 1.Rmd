@@ -1,0 +1,348 @@
+---
+title: "624 Week 1"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-02-01"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r}
+library(fpp3)
+library(dplyr)
+```
+
+## Exercise 2.1
+
+-   What is the time interval of each series?
+
+Ans: Bricks dataset is from 1956 to 2010
+
+-   Use `autoplot()` to produce a time plot of each series.
+
+Brick production shows an upward trend until 1980 Q1 then the production started to trend downward.
+
+```{r}
+bricks<- aus_production %>% 
+  select(Quarter, Bricks)
+
+autoplot(bricks)
+```
+
+Pelt: from 1845 to 1935 Lynx pelt trading record has a seasonal pattern.
+
+```{r}
+
+lynxx<- pelt %>% 
+  select(Year, Lynx) 
+
+autoplot(lynxx)
+```
+
+GAFA Stock
+
+Period: From 2014 to 2018
+
+Amazon and Google both have an upward trend. Facebook and AAPL are relatively stable.
+
+```{r}
+close<- gafa_stock %>% 
+  select(Date, Symbol, Close)
+autoplot(close)
+```
+
+vic_elec From 2012 to 2015 This shows a seasonal pattern
+
+```{r}
+vic_elec
+demand<- vic_elec %>% 
+  select(Date, Demand)
+autoplot(demand) + labs(y='electricity demand in MWh',
+                        x='Years(every 30min)',
+                        title = "Half-hourly electricity demand for Victoria, Australia")
+```
+
+## 2.2 Use filter() to find what days corresponded to the peak closing price for each of the four stocks in gafa_stock.
+
+```{r}
+gafa_stock %>% 
+  group_by(Symbol) %>% 
+  filter(Close == max(Close)) %>% 
+  select(Symbol, Date, Close)
+```
+
+## 2.3 a) You can read the data into R with the following script:
+
+```{r}
+url<- 'https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/tute1%20(2).csv'
+tute1<- readr::read_csv(url)
+view(tute1)
+```
+
+Convert the data to time series
+
+```{r}
+mytimeseries<- tute1 %>% 
+  mutate(Quarter = yearquarter(Quarter)) %>% 
+  as_tsibble(index=Quarter)
+
+```
+
+Construct time series plots of each of the three series
+
+```{r}
+mytimeseries %>% 
+  pivot_longer(-Quarter) %>% 
+  ggplot(aes(x=Quarter, y=value, color = name))+
+  geom_line() +
+  facet_grid(name ~ .,scales ='free_y')+
+  labs(title='Facet_grid')
+
+mytimeseries %>% 
+  pivot_longer(-Quarter) %>% 
+  ggplot(aes(x=Quarter, y=value, color = name))+
+  geom_line() +
+  labs(title = 'No facet_grid')
+```
+
+Question: Check what happens when you don’t include `facet_grid()?`
+
+Ans: Without the facet_grid, three plots are combined together in a single graph with the same y-axis.
+
+## 2.4 The USgas package contains data on the demand for natural gas in the US.
+
+a)  Install the USgas package.
+
+```{r}
+#install.packages('USgas')
+library(USgas)
+
+```
+
+b)  Create a tsibble from us_total with year as the index and state as the key.
+
+```{r}
+us_total <- USgas::us_total %>%
+  as_tsibble(key = state,
+            index = year)
+head(us_total)
+```
+
+c)  Plot the annual natural gas consumption by state for the New England area (comprising the states of Maine, Vermont, New Hampshire, Massachusetts, Connecticut and Rhode Island).
+
+```{r}
+us_total %>% 
+  filter(state %in% c('Maine', 'Vermont', 'New Hampshire', 'Massachusetts', 'Connecticut', 'Rhode Island')) %>% 
+  ggplot(aes(x=year, y=y, color=state)) +
+  geom_line()+
+  facet_grid(state ~., scale='free_y')+
+  labs(y='total natural gas consumption in a million cubic feet["in thousand"]')
+
+```
+
+## 2.5) a) Download tourism.xlsx from the book website and read it into R using readxl::read_excel()
+
+```{r}
+url2<- 'C:\\Users\\godly\\Downloads\\tourism.xlsx'
+tour2<- readxl::read_excel(url2)
+tour2
+```
+
+b)  Create a tsibble which is identical to the tourism tsibble from the tsibble package.
+
+```{r}
+tourr2<- tour2 %>% 
+  mutate(Quarter = yearquarter(Quarter)) %>% 
+  as_tsibble(index=Quarter, key=c('Region', 'State','Purpose','Trips')) 
+
+```
+
+c)  Find what combination of Region and Purpose had the maximum number of overnight trips on average.
+
+    Ans: Sydney and visiting are the combination that has the max number of trips on average.
+
+```{r}
+tour2 %>% 
+  group_by(Region, Purpose) %>% 
+  summarise(avg_trip = mean(Trips)) %>% 
+  slice_max(avg_trip, n=1) %>% 
+  arrange(desc(avg_trip))
+```
+
+d)  Create a new tsibble which combines the Purposes and Regions, and just has total trips by State.
+
+```{r}
+tourr2 %>% 
+  group_by(State) %>% 
+  summarise(total_trip=sum(Trips)) %>% 
+  index_by(Quarter)
+```
+
+## 2.8: Use the following graphics functions: autoplot(), gg_season(), gg_subseries(), gg_lag(), ACF() and explore features from the following time series: “Total Private” Employed from us_employment, Bricks from aus_production, Hare from pelt, “H02” Cost from PBS, and Barrels from us_gasoline.
+
+### Data 1 US_employment:
+
+Questions:
+
+1)  Can you spot any seasonality, cyclicity and trend?
+
+    Ans: The US employment data has an obvious upward trend rather than any seasonality and cyclicity. The autoplot shows almost a straight upward straight line.
+
+2)  What do you learn about the series?
+
+    Ans: The gg_subseries shows a very obvious pattern that throughout different years and acroos all the months, the employment rate is constantly going up.
+
+3)  What can you say about the seasonal patterns? Can you identify any unusual years?
+
+    Ans: The only slight unusual year in around 2000, where the employment rate showed a slight drop for the while year. Besides that the trend is just upward.
+
+```{r}
+total_private<- us_employment %>% 
+  mutate(Month = yearmonth(Month)) %>% 
+  filter(Title=='Total Private') %>% 
+  as_tsibble(index=Month)
+
+autoplot(total_private) +  labs(title = 'autoplot')
+gg_season(total_private)+  labs(title = 'gg_season')
+gg_subseries(total_private)+  labs(title = 'gg_subseries')
+gg_lag(total_private)+  labs(title = 'gg_lag')
+total_private %>% 
+  ACF(total_private$Employed) %>% 
+  autoplot() + labs(title = 'Autocorrelation plot')
+```
+
+```{r}
+total_private %>% 
+  ACF(total_private$Employed) %>% 
+  autoplot() + labs(title = 'Autocorrelation plot')
+```
+
+Us employment has an upward trend. It has been increasing over the years.
+
+### Data 2 aus_production:
+
+Questions:
+
+1.  Can you spot any seasonality, cyclicity and trend?
+
+    Ans: There seems to be a seasonality in the data. The Bricks production usually is low at the beginning of a year's quarter and peaks at Q3.
+
+2.  What do you learn about the series?
+
+    Ans: The gg_season and gg_lag plots do not offer much insight due to their structures. The line plot and the gg_subseries provide a lot of great insight into the seasonality patterns.
+
+3.  What can you say about the seasonal patterns?
+
+    Ans: Yearly speaking, Q1 is usually the trough and Q3 is the peak of brick production.
+
+4.  Can you identify any unusual years?
+
+    Ans: 1980 had the brick production at all time high followed by the biggest drop in around 1981 Q1.
+
+```{r}
+brick<- aus_production %>% 
+  select(Quarter, Bricks)
+autoplot(brick)+ labs(title = 'Autoplot')
+gg_season(brick)+ labs(title = 'gg_season')
+gg_subseries(brick)+ labs(title = 'gg_subseries')
+gg_lag(brick)+ labs(title = 'gg_lag')
+ACF(brick) %>% autoplot() + labs(title='bricks')
+```
+
+### Data 3 Hare from pelt
+
+Questions:
+
+1.  Can you spot any seasonality, cyclicity and trend?
+
+    Ans: There is a seasonality in the hare pelt trade. The ups and downs are relatively constant throughout different year, hinting a feature of seasonality.
+
+2.  What do you learn about the series?
+
+    Ans: The gg_season(unable to generate due to data type), gg_subseries, and gg_lag plots are not useful since there is only one variable for the observation. The ACF plot, however, reveals a seasonality pattern that for a negative correlation in trading hare pelt is observed every 10 years. There is a reversal of trading correlation from negative to positive and vice versa.
+
+3.  What can you say about the seasonal patterns?
+
+    Ans: The seasonal pattern shows a periodic reversal of correlation in pelt trading, roughly every 5 years.
+
+4.  Can you identify any unusual years?
+
+    Ans: There is an unusual high trading record for hare pelt in around 1865 followed by a steep drop in 1870.
+
+```{r}
+hare <- pelt %>% 
+  select(Year, Hare)
+
+autoplot(hare) + labs(y='Hare pelt trading', title = 'Autoplot')
+gg_subseries(hare)+labs(y='Hare pelt trading', title = 'gg_subseries')
+gg_lag(hare)+labs(y='Hare pelt trading', title = 'gg_lag')
+ACF(hare) %>% autoplot() +labs(title = 'Hare pelt trading')
+```
+
+### Data 4 “H02” Cost from PBS
+
+Question:
+
+1.  Can you spot any seasonality, cyclicity and trend?
+
+    Ans: Seasonality and upward trend is observed. The seasonality pattern is seen repeating in about 6 month time frame.
+
+2.  What do you learn about the series?
+
+    Ans: The autoplot shows that there is a general upward trend for the cost of Medicare prescription in AUS. The gg_season is not particular revealing due to how massive the data series is. The gg_subseries shows that in the month of January, the cost of medicare is generally higher than other months of the year. gg_lag is not particular revealing. Finally, gg_lag shows a seasonality correlation that reverses in a period of about 6 months.
+
+3.  What can you say about the seasonal patterns?
+
+    Ans: The cost of medicare fluctuates in a 6 months period that transitions from positively correlated to negatively correlated and it repeats.
+
+4.  Can you identify any unusual years?
+
+    Ans: There isn't a particular year that stands out.
+
+```{r}
+H02<- PBS %>% 
+  subset(ATC2=='H02', select = c(Month, Cost)) %>% 
+  mutate(Cost = Cost/100000)
+
+autoplot(H02) + labs(y='$AUD in Millions', title = 'Autoplot')
+gg_season(H02) + labs(y='$AUD in Millions', title = 'gg_season')
+gg_subseries(H02)+labs(y='$AUD in Millions', title = 'gg_subseries')
+gg_lag(H02) + labs(y='$AUD in Millions', title = 'gg_lag')
+ACF(H02) %>% autoplot()+labs(y='$AUD in Millions', title = 'gg_lag')
+```
+
+### Data 5 Barrels from us_gasoline
+
+Questions:
+
+1.  Can you spot any seasonality, cyclicity and trend?
+
+    Ans: There is an upward trend of gasoline barrel production since 1991 to 2017. No distinct seasonality or cyclicity is observed.
+
+2.  What do you learn about the series?
+
+    Ans: The line plot shows an upward trend for the gasoline production through the years. gg_season also confirms the upward trend for placing the later years higher in the graph and gg_subseries shows similar pattern as the autoplot line plot. ACF plot also shows that there is a general positive correlation between gasoline production and years (in weeks).
+
+3.  What can you say about the seasonal patterns?
+
+    Ans: There isn't a distinct seasonal pattern.
+
+4.  Can you identify any unusual years?
+
+    Ans: There is a relatively big drop in gasoline production after 2009 week 53. However, the gasoline production picked up soon after.
+
+```{r}
+autoplot(us_gasoline) + labs(y='million barrels per day', title = 'Autoplot')
+gg_season(us_gasoline) + labs(y='million barrels per day', title = 'gg_season')
+gg_subseries(us_gasoline)+labs(y='million barrels per day', title = 'gg_subseries')
+gg_lag(us_gasoline) + labs(y='million barrels per day', title = 'gg_lag')
+ACF(us_gasoline) %>% autoplot()+labs(y='million barrels per day', title = 'gg_lag')
+```
+
+```         
+```

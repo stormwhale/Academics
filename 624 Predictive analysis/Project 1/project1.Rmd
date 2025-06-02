@@ -1,0 +1,665 @@
+---
+title: "624 Project1"
+author: "Chi Hang(Philip) Cheung"
+date: "2025-03-11"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(fpp3)
+library(lubridate)
+library(dplyr)
+library(writexl)
+library(imputeTS)
+```
+
+## Part 1
+
+### Load the ATM file
+
+```{r}
+atm_path<- 'https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/ATM624Data%20(6).csv'
+
+atm <- read.csv(atm_path)
+head(atm, 2)
+```
+
+### format the data into tsibble format:
+
+```{r}
+#Converting the date into datetime format:
+atm<- atm %>% 
+  mutate(DATE = as.POSIXct(DATE, format = '%m/%d/%Y %I:%M:%S %p'))
+
+#format the data into tsibble format:
+atm_ts<- atm %>% 
+  mutate(DATE = as.Date(DATE)) %>% 
+  as_tsibble(key = ATM, index=DATE) %>%  
+  arrange(DATE)
+
+#check the data set:
+head(atm_ts)
+```
+
+### To check for missing values other than 2010 May and days:
+
+5 missing values as shown:
+
+```{r}
+atm_ts %>% 
+  filter_index(~'2010-4-30') %>% 
+  filter(is.na(Cash))
+
+# 5 missing values in ATM1 and ATM2
+```
+
+### To visualize the raw dataset
+
+```{r}
+atm_ts %>% 
+  filter(!is.na(Cash)) %>% 
+  ggplot(aes(x=DATE, y = Cash, color = ATM))+
+  geom_line()+
+  facet_wrap(~ATM, scale='free_y')+
+  labs(title = 'Cash withdrawn vs time at four different locations',
+       x = 'Date', y = 'USD')
+```
+
+### Need to fill the missing Cash values by imputing the mean value of that ATM location:
+
+```{r}
+#Calculating the mean value for ATM1 and fill it into the missing values:
+atm1_mean<- atm_ts %>% 
+  as_tibble() %>% 
+  filter(ATM=='ATM1') %>% 
+  summarize(mean = mean(Cash, na.rm=TRUE))
+
+atm2_mean<- atm_ts %>% 
+  as_tibble() %>% 
+  filter(ATM=='ATM2') %>% 
+  summarize(mean = mean(Cash, na.rm=TRUE))
+
+#To put the average Cash value into the missing spots using the imputeTS:
+atm1<- atm_ts %>% 
+  filter(ATM=='ATM1') %>% 
+  na_mean()
+
+atm2<- atm_ts %>% 
+  filter(ATM=='ATM2') %>% 
+  na_mean()
+
+#defining ATM3 and ATM 4 for combining all data below:
+atm3<- atm_ts %>% 
+  filter(ATM=='ATM3')
+
+atm4<- atm_ts %>% 
+  filter(ATM=='ATM4')
+```
+
+### Recombine all the data back into a tidy format:
+
+```{r}
+atm_comb<- bind_rows(atm1,atm2,atm3,atm4)
+#Ensuring the dataframe is correctly combined:
+atm_comb %>% 
+  group_by(ATM) %>% 
+  count()
+
+#Checking for any additional missing values:
+any(sapply(atm_comb,is.na)) #False is returned and all values are in place
+```
+
+### To visualize the imputed data:
+
+```{r}
+atm_comb %>% 
+  autoplot(Cash) + 
+  facet_wrap(~ATM, scale='free_y') +
+  ggtitle('Imputed ATM Data')
+```
+
+### Fitting each location into models:
+
+```{r}
+set.seed(123)
+#ATM location 1,2,and 4 will have SNAIVE as benchmark as seasonality pattern is observed:
+atm_fit124<- atm_comb %>% 
+  filter(!ATM=='ATM3') %>%
+  model(ETS(Cash),
+        auto_arima = ARIMA(Cash, stepwise=FALSE),
+        Snaive_benchmark = SNAIVE(Cash))
+
+#ATM location 3 will have NAIVE model as benchmark due to the simplicity of the data:
+atm_fit3<- atm_comb %>% 
+  filter(ATM=='ATM3') %>%
+  model(ETS(Cash),
+        auto_arima = ARIMA(Cash, stepwise=FALSE),
+        Naive_benchmark = NAIVE(Cash))
+
+#create forecast for ATM location 1, 2, 4 for 30 days in May 2010
+atm_fc124<- atm_fit124 %>% 
+  forecast(h = '30 day')
+#create forecast for ATM location 3 for 30 days in May 2010
+atm_fc3<- atm_fit3 %>% 
+  forecast(h = '30 day')
+
+# recombine the data into one forecast dataframe:
+atm_fc<- bind_rows(atm_fc124,atm_fc3)
+```
+
+### Compare accuracy:
+
+#### ARIMA model out performs both the benchmark and the ETS models in ATM1, ATM2, ATM3 EXCEPT in ATM4, where ETS model is better as shown by the RMSE below:
+
+```{r}
+bind_rows(atm_fit124 %>% accuracy(),
+          atm_fit3 %>% accuracy()) %>% 
+  select(-ME,-MPE, -ACF1) %>% 
+  arrange(ATM, desc=FALSE)
+```
+
+### Plotting the forecasted data:
+
+```{r}
+atm123<- atm_fc %>% 
+  filter(ATM!= 'ATM4', .model=='auto_arima') %>% 
+  autoplot(atm_comb)+
+  ggtitle('Cash withdrawal forecast for ATM1,2,3 using ARIMA models in May 2010')+
+  guides(color= guide_legend(title='.model'))
+
+atm4<- atm_fc %>% 
+  filter(ATM== 'ATM4', .model=='ETS(Cash)') %>% 
+  autoplot(atm_comb)+
+  ggtitle('Cash withdrawal forecast for ATM4 using ETS(M,N,A) models in May 2010')+
+  guides(color= guide_legend(title='.model'))
+
+gridExtra::grid.arrange(atm123, atm4, nrow=2)
+```
+
+### To check the ARIMA models selected:
+
+```{r}
+atm_fit124_long<-atm_fit124 %>% 
+  pivot_longer(col=-ATM,
+               values_to = 'order',
+               names_to = 'model')
+atm_fit3_long<- atm_fit3 %>% 
+  pivot_longer(col=-ATM,
+               values_to = 'order',
+               names_to = 'model')
+
+#combine the two dataframes:
+atm_fit_combo<- bind_rows(atm_fit124_long,atm_fit3_long)
+
+#for ATM1,2,3 ARIMA model
+atm_fit_combo%>% 
+  filter(model=='auto_arima', ATM!='ATM4') #ARIMA(001)(012); ARIMA(500)(011); ARIMA(002), respectively for ATM 1, 2, 3
+
+#for ATM4 ETS model:
+atm_fit_combo%>% 
+  filter((ATM=='ATM4' & model =='ETS(Cash)')) #ETS(M,N,A)
+```
+
+### Diagnostic analysis-Residual Plots:
+
+Residual plots
+
+```{r}
+#checking for residual plots and ljung_box test for white-noise:
+#ATM1
+atm_fit124 %>% 
+  filter(ATM=='ATM1') %>% 
+  select(auto_arima) %>% 
+  gg_tsresiduals() + ggtitle('ATM1 residuals')
+#ATM2
+atm_fit124 %>% 
+  filter(ATM=='ATM2') %>% 
+  select(auto_arima) %>% 
+  gg_tsresiduals() + ggtitle('ATM2 residuals')
+#ATM3
+atm_fit3 %>% 
+  select(auto_arima) %>% 
+  gg_tsresiduals() + ggtitle('ATM3 residuals')
+#ATM4
+atm_fit124 %>% 
+  filter(ATM=='ATM4') %>% 
+  select(`ETS(Cash)`) %>% 
+  gg_tsresiduals() + ggtitle('ATM4 residuals')
+```
+
+### Diagnostic analysis- Ljung-Box Test:
+
+All the models passed with p-value \>0.05
+
+```{r}
+#ATM1 model:
+atm_fit124 %>% 
+  filter(ATM=='ATM1') %>% 
+  select(auto_arima) %>% 
+  augment() %>% 
+  features(.innov, ljung_box, lag = 10, dof = 3)
+#ATM2 model:
+atm_fit124 %>% 
+  filter(ATM=='ATM2') %>% 
+  select(auto_arima) %>% 
+  augment() %>% 
+  features(.innov, ljung_box, lag = 10, dof = 6)
+#ATM3 model:
+atm_fit3 %>% 
+  select(auto_arima) %>% 
+  augment() %>% 
+  features(.innov, ljung_box, lag = 10, dof = 2)
+#ATM4 model:
+atm_fit124 %>% 
+  filter(ATM=='ATM4') %>% 
+  select(`ETS(Cash)`) %>% 
+  augment() %>% 
+  features(.innov, ljung_box, lag = 10)
+```
+
+### Result output to an excel sheet:
+
+```{r}
+#exporting ATM 1 - 3 and ATM 4 will be in a 
+atm_output123<- atm_fc %>% 
+  filter(.model == 'auto_arima', ATM!='ATM4') 
+atm_output4<- atm_fc %>% 
+  filter(.model == 'ETS(Cash)', ATM=='ATM4')
+
+#combining the fables and convert them into dataframe for exporting:
+atm_output_combo <- bind_rows(atm_output123, atm_output4) %>%
+  as.data.frame() %>% 
+  select(ATM, DATE, .mean) %>% 
+  rename(Cash = .mean)
+#To export:
+write_xlsx(atm_output_combo, 'partA_atm_output_combo.xlsx')
+
+```
+
+### Conclusion for part A:
+
+Due to seasonality patterns, the SNAIVE method was selected as the
+benchmark model for ATM1, ATM2, ATM4 to compare whether ARIMA or ETS
+model can out-perform it in RMSE measurements. The auto ARIMA model
+selected for ATM 1, 2, and 3 were ARIMA(0,0,1)(0,1,2),
+ARIMA(5,0,0)(0,1,1), and ARIMA(0,0,2), respectively. An ETS model of
+(M,N,A) was used to model ATM4 since it had the lowest RSME value in the
+comparison. These models were selected automatically based on the AICc
+values. All the models except ATM3 has some degree of seasonality as
+reflected on the seasonal parameters in the selected models. The
+residuals of all four of the ATM models were checked and tested for
+white-noise. All four fitted models have a p_value \> 0.05 from the
+Ljung-box test, indicating the residuals are white-noise and the models
+perform fairly well in capturing all the data.
+
+## Part B
+
+## Monthly forecast of power usage in 2014: Loading data:
+
+```{r}
+url2<- 'https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/ResidentialCustomerForecastLoad-624.csv'
+power<- read.csv(url2)
+
+#checking column types:
+str(power)
+
+#convert dataframe to tsibble:
+power<- power %>% 
+  mutate(month = yearmonth(YYYY.MMM)) %>%
+  select(-YYYY.MMM) %>% 
+  as_tsibble(index = month) %>% 
+  arrange(month, desc=TRUE)
+
+#To visualize
+power %>% autoplot(KWH)+ggtitle('power consumption in KHW')
+
+```
+
+### To check for missing values:
+
+```{r}
+power %>% 
+  filter(is.na(KWH)) # 1 missing value from CaseSequence 861
+
+#We will impute the missing value with the mean KWH from the dataset:
+power<- power %>% 
+  mutate(KWH = if_else(is.na(KWH), mean(KWH, na.rm=TRUE), KWH))
+
+#Double check the imputed value:
+power %>% 
+  filter(CaseSequence==861)
+
+#checking for missing values:
+any(is.na(power)) #False
+```
+
+### Possible transformations on the dataset:
+
+The transformation might not help with the outlier as it amplified the
+outlier's effect.
+
+```{r}
+#Trying out box_cox transformation to stabilize the variance:
+lambda<- power %>% 
+  features(KWH, box_cox, feature=guerrero) %>% 
+  pull(lambda_guerrero)
+
+#plotting the transformed data:
+power %>% 
+  autoplot(box_cox(KWH, lambda = lambda)) +
+  ggtitle('Box Cox transformed KWH')
+```
+
+### To fit the data without the transformation:
+
+```{r}
+#Fitting different models:
+power_fit<- power %>% 
+  model(
+    ETS = ETS(KWH),
+    auto_arima = ARIMA(KWH, stepwise = FALSE),
+    snaive = SNAIVE(KWH)
+  )
+```
+
+### To check the models selected automatically:
+
+```{r}
+power_fit_long<- power_fit %>% 
+  pivot_longer(everything(),
+               values_to= 'order',
+               names_to = 'model')
+print(power_fit_long)
+```
+
+### To compare the performance of each model against each other:
+
+auto_arima out performs the snaive benchmark and the ETS(M,N,M) model
+
+```{r}
+accuracy(power_fit)
+```
+
+### The auto_arima model is selected for the forecast:
+
+```{r}
+power_fc<- power_fit  %>% 
+  select('auto_arima') %>% 
+  forecast(h = '12 month')
+
+#To visualize:
+power_fc %>% autoplot(power) + 
+  ggtitle('KWH usage forecasted monthly for 12 months')
+```
+
+### Diagnostic analysis:
+
+Ljung-box P-Value = 0.52, indicating that the residuals are white-noise
+and the model is fairly well fitted
+
+```{r}
+#Except for one outlier, the residuals are all well within acceptable range for variation
+power_fit %>% 
+  select(auto_arima) %>% 
+  gg_tsresiduals(lag = 12)
+
+#ljung-box test:
+power_fit %>% 
+  select(auto_arima) %>%
+  augment() %>% 
+  features(.innov, ljung_box, lag = 12, dof = 3)
+
+```
+
+### Exporting the results:
+
+```{r}
+expo<- power_fc %>% 
+  as.data.frame() %>% 
+  select(month, .mean) %>% 
+  rename(KWH = .mean) %>% 
+  mutate(month = as.character(month))
+
+write_xlsx(expo, "Part_B_KWH.xlsx")
+```
+
+### Part B Conclusion:
+
+Box-cox transformation was first considered to stabilize the dataset's
+variations. However, after visualizing the transformed data, the
+outlier's effect was seen amplified and the raw without the
+transformation performed fairly well in the fitted model. Thus,
+transformation of the data was not considered as it may negatively
+impact the modeling of the dataset and decrease the interpretability. An
+ARIMA(0,0,1)(1,1,1) was autoselected with step-wise function turned off
+to increase the search parameters of the model. This ARIMA model
+out-performs the ETS and the benchmark SNAIVE model and was selected to
+forecast the data. The residual plots and the Ljung-box test (P-value \>
+0.05) showed that the residuals are considered to be white-noises and
+there is not patterns or auto-correlations between them. This model is
+well fitted to forecast this dataset.
+
+## Bonus part C:
+
+### loading the data:
+
+```{r}
+url1<- 'https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/Waterflow_Pipe1.csv'
+url2<- 'https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/Waterflow_Pipe2.csv'
+
+water1<- read.csv(url1)
+water2<- read.csv(url2)
+```
+
+### Convert the data into date format:
+
+```{r}
+#Convert the Date.Time column into date format.
+water1<- water1 %>% 
+  rename(Date = 'Date.Time') %>% 
+  mutate(Date = as.POSIXct(Date, format='%m/%d/%y %I:%M %p'))
+
+water2<-water2 %>% 
+  rename(Date = 'Date.Time') %>% 
+  mutate(Date = as.POSIXct(Date, format='%m/%d/%y %I:%M %p'))
+```
+
+### To combine the two data into one:
+
+```{r}
+#To combine the two data into one:
+water_combo<- rbind(water1, water2)
+
+#Checking for missing values:
+any(is.na(water_combo)) #None
+```
+
+### Taking the mean values for the Dates that are within an hour:
+
+First we will round the time to the nearest hour from the Date column,
+then extract and group the hours together and get the average value.
+Finally, we will only consider one time period for the same day with
+different hours.
+
+```{r}
+avg_waterflow<- water_combo %>% 
+  mutate(hour = floor_date(Date, unit = 'hour')) %>% #To round and extract the hour
+  group_by(hour) %>% 
+  mutate(avg_waterflow = mean(WaterFlow)) %>% 
+  ungroup() %>% 
+  distinct(hour, avg_waterflow) #Extract only the unique value
+
+#To convert this new averaged data into tsibble:
+ts_water<-avg_waterflow %>% 
+  as_tsibble(index=hour)
+
+head(ts_water)
+```
+
+### To visualize the data:
+
+```{r}
+ts_water %>% 
+  autoplot(avg_waterflow) + 
+  ggtitle('average waterflow vs Date.hour')
+```
+
+### To check if the combined dataset is stationary and if not, how many differencing is needed to make it stationary:
+
+```{r}
+#The data is not stationary and will need differencing to stabilize it.
+ts_water %>% 
+  gg_tsdisplay(avg_waterflow)+ggtitle('Original data')
+
+#To check how many degrees of differencing is needed:
+ts_water %>% 
+  features(avg_waterflow, unitroot_ndiffs) #needs 1 differencing
+
+#To check if seasonal differencing is needed:
+ts_water %>% 
+  features(avg_waterflow, unitroot_nsdiffs) #No seasonal differencing is needed
+
+#Re-check if the differenced data is stationary:
+ts_water %>% 
+  gg_tsdisplay(difference(avg_waterflow))+
+  ggtitle('differenced average waterflow')
+
+#Then check with kpss test:
+ts_water %>% 
+  features(difference(avg_waterflow), unitroot_kpss) 
+#P-value = 0.1. The data appears to be stationary
+```
+
+### Check to see if data needs transformation, using Box-Cox lambda value:
+
+```{r}
+lambda<- ts_water %>% 
+  features(avg_waterflow, box_cox, feature = guerrero) %>% 
+  pull(lambda_guerrero )
+
+#visualize the transformed data:
+ts_water %>% 
+  autoplot(box_cox(avg_waterflow, lambda= lambda)) + ggtitle('Box-Cox transformed data')
+```
+
+The box-cox transformation does not seem to improve the variance by much
+and also amplifies some of the spikes. We will keep it aside and fit
+models without it for now.
+
+### Fitting the waterflow data into model without the transformation:
+
+```{r}
+water_fit<- ts_water %>% 
+  model(
+    auto_ETS = ETS(avg_waterflow),
+    ETS_MNA = ETS(avg_waterflow ~ error('M') + trend('N') + season('A')),
+    ETS_MNM = ETS(avg_waterflow ~ error('M') + trend('N') + season('M')),
+    auto_arima = ARIMA(avg_waterflow, stepwise = FALSE),
+    snaive = SNAIVE(avg_waterflow)
+  )
+```
+
+The Snaive model is added as a benchmark for the model testing. Two
+manually selected ETS model (M,N,A) and ETS (M,N,M) are included to
+capture the seasonality pattern in the data. An auto_selected ARIMA
+model is also included.
+
+### To check the RMSE for each model and select the lowest one for best fit:
+
+```{r}
+accuracy(water_fit) %>% select(.model, RMSE, MAE, RMSSE)
+```
+
+ETS(MNM) slightly out-performs the ETS(MNA) model and has the lowest
+RMSE. The ETS(MNM) model will be used for forecasting.
+
+### Check the models selected for the auto ETS and ARIMA:
+
+```{r}
+water_fit_long<- water_fit %>% 
+  pivot_longer(everything(),
+               values_to = 'order',
+               names_to = 'model')
+
+print(water_fit_long)
+```
+
+### Visualizing the forecasted data with the ETS_MNM model:
+
+```{r}
+water_fc<- water_fit %>% 
+  select(ETS_MNM) %>% 
+  forecast(h= '1 week')
+
+water_fc %>% 
+  autoplot(ts_water) +
+  ggtitle('average waterflow forecasted with ETS(M,N,M) model for 1 week')
+```
+
+### Diagnostic analysis:
+
+To ensure the ETS_MNM fully captures all the data in the fitted model,
+we will analyzes its residuals to determine if they are white-noises.
+
+Ljung-Box p-value = 0.055. We will accept the Null hypothesis that the
+residuals are white-noises.
+
+```{r}
+#visualizing the residual plot:
+water_fit %>% 
+  select(ETS_MNM) %>% 
+  gg_tsresiduals(lag=24) +
+  ggtitle('ETS(MNM) residual plot')
+
+#To compute the ljung-box statistical test:
+water_fit %>% 
+  select(ETS_MNM) %>% 
+  augment() %>% 
+  features(.innov, ljung_box, lag = 24) 
+#p-value =0.055 Passed the ljung-box test.
+```
+
+### To export the results:
+
+```{r}
+water_expo<- water_fc %>% 
+  as.data.frame() %>% 
+  select(hour, .mean) %>% 
+  rename(Date.hour = 'hour', avg_waterflow = '.mean')
+
+write_xlsx(water_expo, 'average_waterflow.xlsx')
+```
+
+### Bonus Part C Conclusion:
+
+The two waterflow data were combined into one big data frame and the
+average waterflow values were calculated when the date and hours are
+within 1 hour period. The data was determined to be non-stationary and
+confirmed that 1 differencing is needed by the unit-root test. However,
+no seasonal differencing is needed. Box-Cox or other transformations
+were avoided due slim improvement seen and the transformed data could
+reduce interpretability of the result. The auto-arima model
+(0,1,1)(0,0,1) confirms that only one differencing was applied and no
+seasonal differencing was used. The auto_ETS model selected (M,N,N),
+which did not include seasonality, which results in higher RMSE.
+However, seasonal patterns are observed in the raw data and two manually
+selected ETS models ETS_MNA and ETS_MNM were introduced to model the
+data. A SNAIVE model is also introduced as a benchmark. The RMSE showed
+that the ETS_MNM has the lowest RMSE, out-performing other models. This
+is most likely due to how the data shifts over time and the multiplicity
+of the seasonality is better fitted for this data. The fitted model from
+the ETS_MNM was then analyzed for white-noise in the residual plots and
+the Ljung-Box statistical test. Although the ACF showed few spikes after
+lag 12, the P-value from Ljung-Box test showed the P-value = 0.055,
+which accepts for null hypothesis that the residuals are white-noises.
+The ETS_MNM will produce a fairly accurate prediction for the waterflow
+data.
