@@ -1,0 +1,68 @@
+---
+title: "Lab 7"
+author: "Chi Hang(Philip) Cheung"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(jsonlite)
+```
+
+### Load data
+
+```{r code-chunk-label}
+url<- "https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/lab%207.csv"
+df<- read.csv(url, row.names= NULL, header=TRUE, sep=',')
+head(df)
+```
+
+### To Json:
+```{r}
+#convert to json format:
+json_df<- toJSON(df, pretty=TRUE)
+write(json_df, file='lab_7.json')
+```
+
+### To HTML
+```{r}
+library(knitr)
+
+html_df<- kable(df, format = "html", table.attr = "class='dataframe'")
+
+writeLines(html_df, "lab7.html")
+```
+
+### To XML:
+```{r}
+library(XML)
+# Convert dataframe to XML
+xml_data <- xmlTree("data")
+
+for (i in 1:nrow(df)) {
+  xml_data$addNode("row", attrs = list(
+    Category = df$Category[i], 
+    Item.Name = df$Item.Name[i], 
+    Item.ID = df$Item.ID[i]),
+    Brand = df$Brand[i],
+    Price = df$Price[i],
+    Variation.ID = df$Variation.ID[i],
+    Variation.Details = df$Variation.Details[i],
+    Detail = df$Column1[i]
+    )
+}
+saveXML(xml_data, file = "lab_7.xml")
+```
+### parquet:
+```{r}
+library(arrow)
+
+write_parquet(df, 'lab_7.parquet')
+```
+
+
+

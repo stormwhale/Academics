@@ -1,0 +1,109 @@
+---
+title: "Lab 3"
+author: "Chi Hang (Philip) Cheung"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(openintro)
+library(tibble)
+```
+
+### create an N1 table
+
+```{r code-chunk-label}
+N1<- tibble(
+  EmployeeID = c(1, 1, 2, 3, 3),
+  EmployeeName = c("John", "John", "Jane", "Alice", "Alice"),
+  Department = c("Sales", "Sales", "Marketing", "HR", "HR"),
+  Project = c("Project A", "Project B", "Project C", "Project D", "Project E"),
+  HoursWorked = c(10, 15, 20, 30, 25)
+)
+
+N1
+```
+
+**This table is in N1 form because all the data are atomic and the rows and columns are not repeating.**
+
+## transform N1 table to N2
+
+**Since the table is in N1 form, we can transform it into N2, eliminating partial dependencies on non-key columns.**
+
+```{r}
+N2EmpID<- N1 %>%
+  subset(select=c(EmployeeID, EmployeeName, Department)) %>%
+  distinct()
+N2EmpID
+```
+
+**To further eliminate partial dependency, we will introduce a new column called ProjectID. This makes the Project column fully dependent on the primary key, which is ProjectID rather than the EmployeeID in the original table.**
+
+```{r}
+N2D_Pro<- N1 %>%
+  mutate(ProjectID= c('AA01', 'AA02', 'AA03', 'AA04', 'AA05')) %>%
+    subset(select=c(ProjectID, Project)) %>%
+      distinct()
+print(N2D_Pro)
+```
+
+```{r}
+N2Hour<- N1 %>%
+  mutate(ProjectID= c('AA01', 'AA02', 'AA03', 'AA04', 'AA05')) %>%
+    subset(select=c(EmployeeID, ProjectID, HoursWorked)) %>%
+      distinct()
+print(N2Hour)
+```
+
+**These three tables happen to also satisfy N3F since each non-key attributes are fully dependent on the primary keys in each table and no transitive dependency is observed. The non-key attribute "HoursWorked" is fully dependent on the composite keys "EmployeeID" and "ProjectID".**
+
+## Data filtering. 173 majors
+
+```{r Filtering 173 College majors}
+major<- read.csv('https://raw.githubusercontent.com/stormwhale/607-assignment/refs/heads/main/majors-list.csv')
+major<-data.frame(major)
+
+
+name<- major %>%
+  filter(str_detect(Major, regex('DATA|STATISTIC', ignore_case = TRUE)))
+name
+```
+
+## 3.  Describe, in words, what these expressions will match:
+
+(.)\\1\\1 **The correct expression should be (.)\\\\1\\\\1 and it will match three of the same characters captured in the first group. (e.g. aaa, ccc, bbb)**
+
+"(.)(.)\\2\\1" **\<- This will capture 4 characters that are reverse of one another. (e.g saas)**
+
+(..)\\1 **\<- The correct expression should be "(..)\\\\1" and it will match anything that is repeating the first two characters. e.g. abab**
+
+"(.).\\1.\\1" **\<- this captures any first letter with any letter that follows and returns the first captured letter with another letter finally followed by the first letter. E.g "cbcnc"**
+
+"(.)(.)(.).\*\\3\\2\\1" **\<- captures three characters followed by a string that could be anything and any length as long as the reverse of the first three characters are followed. E.g. xyz123abc123zyx**
+
+## 4.  Construct regular expressions to match words that:
+
+Start and end with the same character.
+
+```{r}
+df<- 'aaafffddf'
+print(str_view(df, "(.)\\1"))
+```
+
+Contain a repeated pair of letters (e.g. "church" contains "ch" repeated twice.)
+
+```{r}
+df2<- c("church", "success", "letter", "banana", "bookkeeper")
+str_view(df2, "(.)(.).*\\1\\2")
+```
+
+Contain one letter repeated in at least three places (e.g. "eleven" contains three "e"s.)
+
+```{r}
+df3<- 'Tennessee'
+str_view(df3, "(.).*\\1.*\\1")
+```

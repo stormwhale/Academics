@@ -1,0 +1,408 @@
+---
+title: "607 Lab 6 Project2"
+author: "Chi Hang(Philip) Cheung, Inna Yedzinovich"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r load-packages}
+options(repos = c(CRAN = "https://cran.r-project.org"))
+library(tidyr)
+suppressPackageStartupMessages(library(dplyr))
+library(readr)
+library(ggplot2)
+library(tidyverse)
+```
+
+## Dataset 1: SAT scores in 2010
+
+```{r}
+url1<- "https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/SAT__College_Board__2010_School_Level_Results.csv"
+df2<- read.csv(url1)
+head(df2)
+```
+### To tidy up and transform the data:
+```{r}
+df2_tidy<- df2 %>%
+  pivot_longer(cols = c('Critical.Reading.Mean', 'Mathematics.Mean', 'Writing.Mean'),
+               names_to = 'Test_subjects',
+               values_to = 'Average_scores',
+               names_pattern ='(.*)\\.Mean')
+df2_tidy<-rename(df2_tidy,c('Number_of_test_takers'='Number.of.Test.Takers', 'School_name'='School.Name'))
+
+#drop NA schools
+df2_tidy<- df2_tidy %>%
+  subset(!is.na(Number_of_test_takers))
+
+#check if any NA still exist:
+any(sum(is.na(df2_tidy)))
+head(df2_tidy)
+```
+
+### Analyzing the data
+
+To get the top 10 schools ranked by total SAT scores:
+
+```{r}
+top_total<-df2_tidy %>%
+  group_by(School_name) %>%
+  summarise(total_SAT_score= sum(Average_scores)) %>%
+  slice_max(total_SAT_score, n= 10)
+
+print(top_total)
+```
+
+### Top 10 schools SAT SCOREs break down by each test subject
+
+```{r}
+top_sub <- df2_tidy %>%
+  filter(School_name %in% top_total$School_name)
+#To get the mean for each test subject from the top 10 schools:
+top_sub_mean<- top_sub %>%
+  group_by(Test_subjects) %>%
+  summarise(Mean_score = mean(Average_scores))
+print(top_sub_mean) 
+```
+
+```{r}
+ggplot(top_sub, aes(x=reorder(School_name, Average_scores), y= Average_scores, fill=Test_subjects))+
+  geom_bar(stat='identity') +
+  coord_flip() +
+  labs(title = 'Top 10 High Schools SAT scores by Subject', y='', x ='Average SAT Scores')+
+  theme(legend.position = 'bottom')
+```
+
+### To look at how far ahead the top 10 schools from the mean scores of other schools:
+
+```{r}
+#To get the mean and standard deviation from all HS that took the SAT:
+tot_stat<- df2_tidy %>%
+  group_by(Test_subjects) %>%
+  summarise(Mean_score= mean(Average_scores), SD=sd(Average_scores), '1+SD'=Mean_score+SD, '2+SD'=Mean_score+SD*2)
+
+tot_stat_mean<- tot_stat$Mean_score
+tot_stat_2sd<- tot_stat$`2+SD`
+
+ggplot() +
+  geom_histogram(data= df2_tidy, aes(x=Average_scores), fill='grey', binwidth=30)+
+  geom_histogram(data= top_sub, aes(x=Average_scores), fill='blue', binwidth=30)+
+    facet_wrap(~Test_subjects)+
+  labs(title = 'Top 10 high schools mean SAT score distribution by test subject',
+        y='',
+        x='Average Scores') +
+  geom_vline(data= tot_stat, aes(xintercept= tot_stat_mean, color ='Mean'), linetype='dotted', linewidth = 0.9)+
+  geom_vline(data= tot_stat, aes(xintercept= tot_stat_2sd, color ='2+SD'), linetype='dashed', linewidth=0.9)+
+  scale_color_manual(values= c('Mean'='red', '2+SD'='black'))
+```
+
+## Conclusion: Top 10 High Schools are above 2 standard Deviation from the mean scores
+
+### Correlation between \# of test takers and average SAT scores
+
+```{r}
+ggplot(df2_tidy, aes(x= Average_scores, y=Number_of_test_takers))+
+  geom_point() +
+  facet_wrap(~Test_subjects) +
+  geom_smooth(method='lm', se=FALSE) +
+  labs(x= 'Average SAT Score')
+```
+
+There is a positive correlation between number of test takers and average SAT scores. The higher number of people from a school participating in the SAT, the average score is generally higher than the mean value. This is observed in all three test subjects.
+
+## Dataset 2: Unity Data - MTA Daily Ridership
+
+Data Overview The dataset contains daily ridership and traffic data for
+various transportation modes in New York City during March 2020. The
+columns include:
+
+-   Date: The date of the record.
+-   Subways: Total estimated ridership and percentage of comparable
+    pre-pandemic day.
+-   Buses: Total estimated ridership and percentage of comparable
+    pre-pandemic day.
+-   LIRR (Long Island Rail Road): Total estimated ridership and
+    percentage of comparable pre-pandemic day.
+-   Metro-North: Total estimated ridership and percentage of comparable
+    pre-pandemic day.
+-   Access-A-Ride: Total scheduled trips and percentage of comparable
+    pre-pandemic day.
+-   Bridges and Tunnels: Total traffic and percentage of comparable
+    pre-pandemic day.
+-   Staten Island Railway: Total estimated ridership and percentage of
+    comparable pre-pandemic day.
+
+Initial Analysis:\
+- There is a noticeable decline in ridership across all transportation
+modes as the month progresses. - The percentage of ridership compared to
+pre-pandemic levels shows a significant decline. - Access-A-Ride: This
+services maintained higher percentages of pre-pandemic levels compared
+to other modes, indicating continued demand for these services despite
+the pandemic - Traffic through bridges and tunnels also decreased but
+not as drastically as public transportation ridership. This could
+suggest a shift towards private vehicle usege during the pandemic.
+
+```{r MAT-Riders-DataSet}
+url <- "https://raw.githubusercontent.com/Yedzinovich/Data-607/main/MTA_Daily_Ridership_Data.csv"
+
+mta_data <- read_csv(url)
+mta_data <- mta_data %>% mutate(Date = as.Date(Date, format = "%m/%d/%y"))
+
+mta_data_long <- mta_data %>% pivot_longer(cols = -Date, names_to = "Metric", values_to = "Value")
+head(mta_data_long)
+
+mta_data_long <- mta_data_long %>% separate(Metric, into = c("Transport_Mode", "Metric_Type"), sep = ": ")
+head(mta_data_long)
+```
+
+Now that we have the data in a long format, we can extract more
+comprehensive insights from it. Long format can help us to perform a
+variety of analyses that are more flexible and insightful compared to
+the original wide format.
+
+\*\*\*What do know: - March 11, 2020, marks the start of the federal
+COVID-19 PHE declaration. - May 11, 2023, marks the end of the federal
+COVID-19 PHE declaration.
+Source:<https://archive.cdc.gov/www_cdc_gov/coronavirus/2019-ncov/your-health/end-of-phe.html#>:\~:text=The%20federal%20COVID%2D19%20PHE,and%20testing%2C%20will%20remain%20available.
+
+```{r MAT-Riders-DataSet-Analysis}
+# Analysis #1
+avg_ridership <- mta_data_long %>%
+  filter(Metric_Type == "Total Estimated Ridership") %>%
+  group_by(Transport_Mode) %>%
+  summarize(Average_Ridership = mean(Value, na.rm = TRUE))
+
+print(avg_ridership)
+
+# Analysis #2
+ggplot(mta_data_long %>% filter(Metric_Type == "Total Estimated Ridership"), aes(x = Date, y = Value, color = Transport_Mode)) +
+  geom_point() +
+  labs(title = "Public Transportation Ridership Trends Over Time", x = "Date", y = "Total Estimated Ridership")
+
+# Analysis #3
+percentage_mta_data <- mta_data_long %>%
+  filter(grepl("% of Comparable Pre-Pandemic Day", Metric_Type))
+
+ggplot(percentage_mta_data, aes(x = Date, y = Value, color = Transport_Mode)) +
+  geom_point() +
+  labs(title = "Percentage of Pre-Pandemic Levels Over Time",
+       x = "Date",
+       y = "Percentage of Pre-Pandemic Levels",
+       color = "Transport Mode")
+
+# Analysis 4
+pt_mta_ridership_data <- mta_data_long %>%
+  filter(Metric_Type == "Total Estimated Ridership")
+
+ggplot(pt_mta_ridership_data %>% filter(Transport_Mode %in% c("Subways", "Buses")), 
+       aes(x = Date, y = Value, color = Transport_Mode)) +
+  geom_point() +
+  labs(title = "Ridership Trends Over Time: Subways vs Buses",
+       x = "Date",
+       y = "Total Estimated Ridership",
+       color = "Transport Mode") 
+
+# Calculate the average ridership for each transport mode during the pandemic
+avg_ridership_pandemic <- pt_mta_ridership_data %>%
+  filter(Date >= as.Date("2020-03-01") & Date <= as.Date("2023-05-11")) %>%
+  group_by(Transport_Mode) %>%
+  summarize(Average_Ridership = mean(Value, na.rm = TRUE))
+
+print(avg_ridership_pandemic)
+
+# Analysis 5
+pre_pandemic <- pt_mta_ridership_data %>%
+  filter(Date >= as.Date("2020-03-01") & Date <= as.Date("2020-03-11"))
+print(pre_pandemic)
+
+post_pandemic <- pt_mta_ridership_data %>%
+  filter(Date >= as.Date("2023-05-12") & Date <= as.Date("2024-10-10"))
+print(post_pandemic)
+
+avg_pre_pandemic <- pre_pandemic %>%
+  group_by(Transport_Mode) %>%
+  summarize(Average_Ridership_Pre = mean(Value, na.rm = TRUE))
+print(avg_pre_pandemic)
+
+avg_post_pandemic <- post_pandemic %>%
+  group_by(Transport_Mode) %>%
+  summarize(Average_Ridership_Post = mean(Value, na.rm = TRUE))
+print(avg_post_pandemic)
+
+avg_ridership <- merge(avg_pre_pandemic, avg_post_pandemic, by = "Transport_Mode")
+print(avg_ridership)
+
+avg_ridership <- avg_ridership %>%
+  mutate(Percentage_Change = ((Average_Ridership_Post - Average_Ridership_Pre) / Average_Ridership_Pre) * 100)
+print(avg_ridership)
+
+ggplot(avg_ridership, aes(x = Transport_Mode, y = Percentage_Change, fill = Transport_Mode)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Percentage Change in Ridership Due to COVID-19",
+       x = "Transport Mode",
+       y = "Percentage Change in Ridership")
+```
+
+#### Analysis:
+
+##### 1- Analyze the average ridership for each transport mode.
+
+The data shows that subways have the most riders, with about 2.48
+million people using them daily, much more than other types of
+transport. Buses come next, with around 1 million riders each day,
+making them very important. LIRR and Metro-North have fewer riders, with
+around 134,000 and 113,000 daily, since they serve commuters in specific
+regions. Staten Island Railway has the fewest riders, just over 4,000,
+likely because it covers a smaller area. Overall, subways and buses are
+the main ways people get around in the city.
+
+##### 2- Analyze how ridership for different transportation modes changes over time. This can help identify patterns, such as the impact of the COVID-19 pandemic on public transportation usage.
+
+As we can see, the chart shows public transportation ridership trends
+from 2020 to 2024, highlighting a sharp drop across all modes in early
+2020 due to the COVID-19 pandemic, with subway ridership (in purple)
+experiencing the most significant decline. Ridership began recovering
+mid-2020, with buses showing a steadier recovery compared to the more
+volatile subway data. Regional transport modes like LIRR, Metro-North,
+and Staten Island Railway have consistently lower ridership. The chart
+reveals that, despite gradual recovery, ridership across all modes has
+not fully returned to pre-pandemic levels by 2024.
+
+##### 3- Analyze how the percentage of ridership compared to pre-pandemic levels changes over time for each transportation mode.
+
+The chart shows that public transportation usage dropped sharply during
+the pandemic but has been recovering at different rates across transport
+modes from 2020 to 2024. Bridges and tunnels saw the fastest recovery,
+exceeding 100% of pre-pandemic levels by 2021, indicating a shift
+towards car travel. Access-A-Ride and buses gradually returned to
+normal, nearing or slightly surpassing pre-pandemic levels by 2024.
+However, commuter services like the LIRR, Metro-North, and Staten Island
+Railway have been slower to recover, remaining below 100%, likely due to
+changes in work patterns. Subways are also recovering slowly, still
+below pre-pandemic levels by 2024.
+
+##### 4- Analyze the ridership trends between different transportation modes (subways vs buses) to see which modes were more resilient during the pandemic.
+
+The graph shows that both subway and bus ridership dropped sharply at
+the start of 2020 due to the pandemic. Subways saw a bigger drop than
+buses, but they have been recovering faster. By 2024, subway ridership
+has risen back to over 2 million, though it fluctuates more, while bus
+ridership has stayed steadier but remains below 2 million. Overall,
+subways have more riders than buses, but buses have a more stable number
+of users over time.
+
+##### 5- Analyze the impact of the COVID-19 pandemic on ridership by comparing pre-pandemic and post-pandemic data.
+
+The graph illustrates that most MTA transportation systems experienced a
+decline in ridership due to the COVID-19 pandemic, with Staten Island
+Railroad suffering the largest decrease, with over 50% fewer passengers.
+In contrast, Metro-North has seen an increase in ridership, likely due
+to people relocating from New York City during the pandemic and opting
+to commute using Metro-North.
+
+## Dataset 3: K-12 Schools diversity from 1994-2017 in all states
+
+```{r}
+url3<- "https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/school%20divers.csv"
+df3<-read.csv(url3)
+head(df3)
+```
+
+Cleaning and tidying the dataset. The racial groups are already
+represented in percentage for each school. NA values are assumed to be
+0. All percentage will be rounded to the nearest tenth value.
+
+```{r}
+df3_tidy<- df3 %>%
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  pivot_longer(cols = AIAN:Multi,
+               names_to = 'Ethnicity',
+               values_to = 'Student_percentage') %>%
+  mutate(Student_percentage=round(as.numeric(Student_percentage),1))
+
+head(df3_tidy)
+```
+
+### Data analysis:
+
+### 1) Overall ethnicity distribution of K-12 students:
+
+Asian and AIAN groups seem to be the most under integrated among
+different schools. (See plot below)
+
+```{r}
+ggplot(df3_tidy, aes(x=Student_percentage, fill=Ethnicity)) +
+  geom_histogram(binwidth = 5, position='dodge') +
+  labs(y='frequency',
+       title = 'Frequency distribution of K-12 students ethnicity',
+       subtitle = 'Counted by student percentage')
+```
+
+### In 2016-2017, which states have schools that integrated at least 50% Asian and AIAN students?
+
+```{r}
+df3_2017<- df3_tidy %>%
+  filter(SCHOOL_YEAR=='2016-2017') %>%
+  filter((Ethnicity =='Asian' | Ethnicity == 'AIAN') & Student_percentage >= 50) %>%
+  group_by(ST, Ethnicity) %>%
+  summarize(mean_percentage = mean(Student_percentage), .groups = 'drop') %>%
+  arrange(desc(mean_percentage))
+
+print(df3_2017)
+```
+
+```{r}
+ggplot(df3_2017, aes(x=reorder(ST, -mean_percentage), y=mean_percentage, fill= Ethnicity)) +
+  geom_bar(stat='identity', position = 'dodge') +
+  labs(title = 'In year 2016-2017, states that have schools with at least 50% AIAN or Asian',
+       x='States',
+       y='Mean percentage of students in each state')
+```
+
+### 2) - Between State Comparisons, compare the integration levels of different ethnic groups between states to see which states are more integrated.
+
+```{r between-states}
+df3_state_comparison <- df3_tidy %>%
+  group_by(ST, Ethnicity) %>%
+  summarize(mean_percentage = mean(Student_percentage), .groups = 'drop') %>%
+  arrange(desc(mean_percentage))
+
+ggplot(df3_state_comparison, aes(x=reorder(ST, -mean_percentage), y=mean_percentage, fill=Ethnicity)) +
+  geom_bar(stat='identity', position='dodge') +
+  labs(title = 'Comparison of Ethnic Integration Between States',
+       x='States',
+       y='Mean Percentage of Students') +
+  coord_flip() + 
+  theme(axis.text.y= element_text(size = 7))
+```
+
+#### Analysis 1: Overall distribution of ethnicity
+
+The graph depicts the mean percentage of students in U.S. states during
+the 2016-2017 school year, with at least 50% of either American Indian
+and Alaska Native or Asian students integrated into schools. Wyoming,
+North Dakota, and Nebraska have the highest proportions of AIAN
+students, approaching or at 100%. In contrast, states like Arizona,
+California, and New Jersey show substantial integration of Asian
+students. States like South Dakota, Washington, and Idaho present a more
+balanced distribution between AIAN and Asian student populations.
+Overall, the chart highlights significant regional differences in ethnic
+integration within school systems, particularly for AIAN and Asian
+students
+
+#### Analysis 2: Between State Comparison
+
+The graph compares the ethnic integration of students in various states,
+showing the mean percentage of different racial groups in schools. White
+students make up the largest proportion of students in most states,
+often exceeding 50% and even approaching 100% in several. Hispanic,
+Black, and Asian students are represented at lower percentages across
+states, with some variation. AIAN students and students of multiple
+races have smaller but noticeable percentages in some states. The chart
+highlights significant racial differences in student populations across
+states, with White students being the most dominant group.

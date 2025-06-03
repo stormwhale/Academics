@@ -1,0 +1,58 @@
+---
+title: "API calls"
+Author: Chi Hang(Philip) Cheung
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+library(tidyverse)
+library(httr2)
+library(dotenv)
+library(purrr)
+```
+Make secret key 
+```{r}
+nytimes_a<- secret_make_key()
+nytimes_token<- secret_encrypt(Sys.getenv('nytimes'), nytimes_a)
+nytimes_API_key<- secret_decrypt(nytimes_token, nytimes_a)
+```
+https://api.nytimes.com/svc/topstories/v2/us.json?api-key=yourkey
+
+```{r}
+base_url<- "https://api.nytimes.com/svc/topstories/v2/"
+section<- 'home'
+
+re<- request(base_url) %>% 
+  req_url_path_append(paste0(section, '.json')) %>% 
+  req_url_query(
+    `api-key` = nytimes_API_key) %>% 
+  req_perform()
+```
+
+```{r}
+#preview the first article
+nytimes_home<- re %>% 
+  resp_body_json() %>% 
+  pluck('results') %>% 
+  map(~ list('Title'=.x$title, 'Author'=.x$byline, 'Pub_date'=.x$published_date, 'Section'=.x$section)) %>% 
+  map_dfr(as.data.frame)
+
+#format the date:
+nytimes_home %>% 
+  mutate(Pub_date=ymd_hms(Pub_date))
+```
+Group by sections:
+```{r}
+sorted<- nytimes_home %>% 
+  group_by(Section) %>% 
+  summarise(numbers=n())
+
+ggplot(sorted, aes(x=Section, y=numbers, fill=Section)) +
+    geom_bar(stat='identity')+
+    labs(title='Types of news in the top stories section')
+
+```
+

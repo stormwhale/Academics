@@ -1,0 +1,73 @@
+---
+title: "Joe Biden Approval Rating from 2021-2023"
+author: "Chi Hang (Philip) Cheung"
+date: "`r Sys.Date()`"
+output: openintro::lab_report
+---
+# Overview
+This Joe Biden Approval rating data is gathered from publicly available surveys from 2021 to 2023. Essentially, If the average approval rating on a given day is greater than 50% or either approval is higher than the counter part, it is marked as "approve" and vice versa.
+Source:
+https://fivethirtyeight.com/methodology/how-our-polling-averages-work/
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(openintro)
+library(ggplot2)
+library(dplyr)
+```
+
+
+
+##Download and Import dataframe
+To get the CSV from Github link: https://raw.githubusercontent.com/fivethirtyeight/data/cdac9b8cc525a499d1cf36fa079a7127b56aebc6/polls/old_model/joe_biden_approval_old_model.csv
+```{r code-chunk-label1}
+df<- read.csv("https://raw.githubusercontent.com/fivethirtyeight/data/cdac9b8cc525a499d1cf36fa079a7127b56aebc6/polls/old_model/joe_biden_approval_old_model.csv", header=TRUE)
+```
+
+## Rename columns + transform data
+```{r code-chunk-label2}
+names(df)[names(df)==c("pct_estimate", "lo", "hi")]<-c("Average_percentage", "low end percentage", "upper end percentage")
+#drop the last two columns
+df<-subset(df, select=c(1:4))
+#transform data into wider form
+df<-df %>%
+  pivot_wider(
+    names_from = answer,
+    values_from = 'Average_percentage'
+  )
+#add a conclusion column
+df<- df %>%
+  mutate(Conclusion = case_when(
+    Approve > Disapprove ~"Approve",
+    Disapprove > Approve ~"Disapprove"
+    ))
+```
+
+## Graph 1
+generate a graph for the approval vs disapporval rating count
+```{r code-chunk-label3}
+ggplot(df, aes(x = Conclusion, fill=Conclusion), color=Conclusion)+
+  geom_bar() +
+  labs(title='Joe Biden Approval/Disapproval rating from 2021 to 2023', x = '', y ='rating counted')
+
+```
+## Graph 2
+generate a graph for the approval vs disapporval rating graph over time by years
+```{r code-chunk-label4}
+df1<- format(as.Date(df$date), "%Y")
+df<-df %>%
+  mutate('only_year'= df1)
+
+ggplot(df, aes(x=only_year, fill=Conclusion, color=Conclusion))+
+  geom_bar()
+```
+
+## Conclsuion and future improvement: 
+Joe Biden has an overall disapproval rating from 2021 to 2023. A further analysis can be done to zoom into the months of the year and draw connection to the political situations at the time to understand the polls. It will involve transforming the "date" column further.
+
+
+
+
+
+
+

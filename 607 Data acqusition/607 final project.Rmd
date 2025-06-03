@@ -1,0 +1,329 @@
+---
+title: "607 Final Project: Are Hybrid vehicles more fuel efficient than Internal Combustion Engine vehicles?"
+author: "Chi Hang(Philip) Cheung"
+date: "2024-11-19"
+output: 
+  slidy_presentation: default
+  ioslides_presentation: default
+  beamer_presentation: default
+---
+## Project objectives:
+- Objective: The Object of this project is to compare the fuel efficiency, measured in Miles Per Gallon(MPG), between hybrid engine vehicles(HEV) and internal combustion engine (ICE) vehicles. 
+
+- Motivation: As a potential buyer of a HEV and a car enthusiast, the study is of particular interest to me to research. 
+
+- Data Sources: We will be examining two datasets from two data sources. The first dataset is data obtained from the Environmental Protection Agency (EPA), where they performed in-house MPG testings on the upcoming 2025 vehicles. The second dataset is extracted via NYC Open data API call, where they recorded real-world MPGs from both HEV and ICE vehicles.
+
+- Challenges: Simulation an ETL process where data are extracted from API call, transformed/corrected, then uploaded the final version back to SQL database.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(RMySQL)
+library("RSocrata")
+library(dotenv)
+library(infer)
+```
+
+## Dataset #1: MPG data extracted from the EPA website:
+Dataset background: EPA in-house MPG test results on all 2025 car models from all auto manufactuers.
+
+```{r}
+url<- 'https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/Copy%20of%202025%20FE%20Guide%20for%20DOE-release%20dates%20before%2010-17-2024-no-sales%20-10-17-2024public.csv'
+df<- read.csv(url)
+head(df)
+```
+
+## Data transformation and cleaning:
+```{r}
+#selecting only relevant columns and eliminate NA values:
+df_mpg_og<- df %>% 
+  subset(select = c(Mfr.Name, Carline, X..Cyl, Comb.Unrd.Adj.FE...Conventional.Fuel, Descriptor...Model.Type..40.Char.or.less., Battery.Type.Desc)) %>% 
+  filter(!is.na(X..Cyl))
+
+#Rename columns to meaningful names:
+names(df_mpg_og)=c('Manufacture', 'Car_model', 'Cylinder_num', 'Combined_MPG','Model_type', 'Battery_type')
+
+#Create helper columns to sort the vehicle engine type and class based on "Model_type" column:
+df_mpg_og<-df_mpg_og %>% 
+  mutate('Engine_type'=case_when(Battery_type=="" ~"ICE",
+                                 grepl("\\bMild Hybrid\\b", Model_type) ~ "mild hybrid",
+                                 grepl("\\bHybrid\\b", Model_type) ~ "full hybrid")) %>% 
+  mutate('Engine_class'=case_when(Engine_type=='mild hybrid'~'hybrid',
+                                   Engine_type=='full hybrid'~'hybrid',
+                                   Engine_type=='ICE'~'ICE'),
+         Battery_type=ifelse(Battery_type=="","No Battery", Battery_type)) %>% 
+  select(-"Model_type")
+
+#Create a variable for all types of engine models:
+full_hybrid<- df_mpg_og %>% 
+  filter(Engine_type == 'full hybrid')
+
+mild_hybrid<- df_mpg_og %>% 
+  filter(Engine_type == 'mild hybrid')
+
+ICE<- df_mpg_og %>% 
+  filter(Engine_type=='ICE')
+
+head(df_mpg_og)
+```
+
+## Data Exploratory on dataset #1:
+This density plot shows the overview of the MPG distribution for different engine types
+```{r}
+ggplot(df_mpg_og, aes(x=Combined_MPG, fill= Engine_type)) +
+  geom_density(alpha = 0.5) +
+  labs(title="MPG distribution among different types of engine design",
+       subtitle = "Not separated for number of cylinders")
+```
+
+## Explore the relationship between number of engine cylinders and MPGs:
+```{r, message=FALSE}
+ggplot(df_mpg_og, aes(x=Combined_MPG, y=Cylinder_num)) +
+  geom_point(aes(color = Engine_type), alpha=0.5) +
+  geom_smooth(se=FALSE) +
+  labs(title = 'Engine cylinder vs MPG',
+       y='Number of engine cylinder',
+       x='Combined MPGs')
+
+
+```
+
+- An inverse proportional relationship is observed in combined MPG vs cylinder number.
+- MPGs drastically improves as the number of engine cylinders go down in numbers.
+- The most optimal number of engine cylinders for MPG is around 4.
+
+
+## Explore the mean MPGs for each of the engine cylinder groups:
+```{r, message=FALSE}
+#Calculating the average MPG for each cylinder group and plotted them:
+cyl_mpg<- df_mpg_og %>% 
+  group_by(Engine_type, Cylinder_num) %>% 
+  summarise("average_mpg_cylinder"=mean(Combined_MPG))
+
+cyl_mpg
+```
+
+```{r}
+ggplot(cyl_mpg, aes(x=Engine_type, y=average_mpg_cylinder, fill = Cylinder_num)) +
+  geom_bar(position='dodge2', stat='identity') +
+  geom_text(aes(label = Cylinder_num),
+            position = position_dodge2(width = 0.8),
+            vjust=-0.5, hjust = 0.1) +
+  labs(title = 'Average mpg vs engine cylinder number') +
+  theme(legend.position = 'none')
+```
+
+- Based on these results, the number of cylinders greater than 8 are generally considered as vehicles designed for enthusiasts, which consist of only a small number of vehicle models (see below) but are highly influential to the data plot as they have significantly low MPGs. This study will only consider engine cylinders equal to or less than 8.
+
+- To examine the percentage distribution of each cylinder groups:
+```{r}
+df_mpg_og %>% 
+  group_by(Engine_type, Cylinder_num) %>% 
+  count(Cylinder_num) %>% 
+  group_by(Engine_type) %>% 
+  mutate(percentage = paste(round((n/sum(n)*100), 2), "%"))
+```
+
+## Statistical tests:
+
+- Null hypothesis: There is no statistical difference in the combined MPGs across all engine types.
+
+- Alternative hypothesis: There is a statistical difference in the combined MPGs in at least one engine types.
+
+## Welch Anova and pairwise tests:
+```{r}
+set.seed(321)
+#Remove engine cylinders great than 8.
+df_mpg_8<- df_mpg_og %>% 
+  filter(Cylinder_num<9)
+
+#Calculate the variance:
+bartlett.test(Combined_MPG ~ Engine_type, data = df_mpg_8)
+#p-value < 0.05, indicating that the rough equal variance assumption is invalid, and Welch's Anova test is needed for the analysis.
+
+# Welch anova:
+wel<- oneway.test(Combined_MPG ~ Engine_type, data=df_mpg_8, var.equal = FALSE)
+print(wel)
+
+# To compare each group individually:
+pair<- pairwise.t.test(df_mpg_8$Combined_MPG , df_mpg_8$Engine_type, var.equal = FALSE)
+
+print(pair)
+```
+
+- Conclusion: The Welch Anova test showed that there is strong evidence to reject the null hypothesis and in favor of the alternative hypothesis (P-value <2e-16) in at least one of the groups.
+
+- The pairwise test showed that full hybrid vehicles is the only group that has strong evidence to reject the null hypothesis in favor of the alternative hypothesis that there is significant difference in combined MPG  against ICE and mild hybrid vehicles. On the other hand, mild hybrid and ICE vehicles did not have enough evidence to reject the null hypothesis (P-value = 0.22) to show statistical difference in combined MPG.
+
+
+## Dataset #2: Real world MPG measurements in hybrid and non-hybrid vehicles
+- This dataset consist of vehicles from year 2008 - 2018 models. The actual MPGs are recorded via geotab tracker.
+
+Data acquisition through OpenData.gov API
+```{r}
+api_df<- read.socrata(
+  "https://data.cityofnewyork.us/resource/mn2p-34if.json",
+  app_token = Sys.getenv("nyc_app_token"),
+  email     = Sys.getenv("nyc_data_user"),
+  password  = Sys.getenv("nyc_data_pw"))
+
+head(api_df)
+```
+
+## Data cleaning and transformation:
+```{r, message=FALSE}
+# remove $ sign and "," in the cost column
+api_df[, 13:14]<- sapply(api_df[,13:14], function(x) as.numeric(gsub("[$,]", "", x)))
+
+#only compare sedan and SUV:
+api_clean<- api_df %>% 
+  filter((standard_type =="SEDAN" |standard_type == "SUV"))
+
+# convert columns to numerical values:
+api_clean[,6:14]<- sapply(api_clean[, 6:14], function(x) as.numeric(x))
+
+#checking data distribution and found an outlier as an error in the dataset. NYC gov accidentally put a Prius as a "non-hybrid" car but all Pruii are made as hybrid. 
+ggplot(api_clean, aes(x=actual_fuel_economy_geotab)) +
+  geom_histogram()+
+  facet_wrap(~hybrid_non_hybrid)
+```
+
+- One outlier was observed in the non-hybrid set.
+
+## Outlier examination:
+```{r}
+#Selecting the outlier with the two conditions:
+api_clean %>% 
+  filter((hybrid_non_hybrid=='Non-Hybrid' & actual_fuel_economy_geotab >=40))
+```
+
+- Upon examination, the outlier happened to be a typo. All Prius models are made hybrid.
+
+## Making correction to the dataset
+```{r}
+#The type exists in row index 45 and it is selected through the code below:
+api_clean[45,] <-api_clean[45,] %>% 
+  mutate(hybrid_non_hybrid = gsub("Non-Hybrid", "Hybrid", hybrid_non_hybrid))
+
+#checking:
+api_clean[45,]
+```
+
+
+## Checking the histograms:
+```{r, message=FALSE}
+ggplot(api_clean, aes(x=actual_fuel_economy_geotab)) +
+  geom_histogram()+
+  facet_wrap(~hybrid_non_hybrid)
+```
+
+## Uploading the cleaned and corrected dataset to Azure SQL database:
+```{r}
+#Forming connection to Azure database:
+dbcon<- dbConnect(MySQL(), 
+                  user = Sys.getenv('az_user'),
+                  password = Sys.getenv('az_pw'),
+                  host = 'cunydata607sql.mysql.database.azure.com',
+                  dbname= Sys.getenv('az_user'),
+                  port = 3306)
+#To upload the dataframe to Azure SQL database:
+dbWriteTable(dbcon, "real_mpg", api_clean, overwrite=TRUE, row.names=FALSE)
+
+#To check table integrity:
+dbGetQuery(dbcon, "select * from real_mpg limit 10")
+```
+Closing the connection:
+```{r}
+dbDisconnect(dbcon)
+```
+
+
+## Exploratory data on dataset #2:
+- Sample sizes:
+```{r}
+api_clean %>% 
+  count(hybrid_non_hybrid) %>% 
+  arrange(desc(n))
+```
+- Based on average fuel cost $2.5/gallon, the cost per mile of gasoline comparison between hybrid and non-hybrid vehicles
+```{r}
+ggplot(api_clean, aes(x=hybrid_non_hybrid, y=actual_fuel_economy_geotab, color=hybrid_non_hybrid)) +
+  geom_boxplot() +
+  scale_color_manual(values = c('Hybrid'='blue', 'Non-Hybrid'='darkgreen')) +
+  labs(title = "Average MPG of hybrid vs. non-hybrid",
+       x="",
+       y="Miles per Gallon (MPG)")
+```
+
+## Compare the most popular ICE and hybrid vehicle:
+- Compare the fuel cost between the most fuel efficient hybrid and Non-Hybrid vehicle with the following conditions:
+ - 1) An average of $3.5 per gallon of gasoline
+ - 2) Annual mileage of 12,000 miles.
+```{r}
+ann_cost<- api_clean %>%
+  group_by(hybrid_non_hybrid) %>%
+  slice_max(actual_fuel_economy_geotab, n=1) %>% 
+  summarise(MPG=actual_fuel_economy_geotab, Average_fuel_cost_per_gallon = 3.5, Annual_milage=12000, Annual_fuel_cost =  round(Annual_milage/actual_fuel_economy_geotab*Average_fuel_cost_per_gallon, 2))
+ann_cost
+```
+
+```{r}
+# Enter the results in a plot:
+ggplot(ann_cost, aes(x=hybrid_non_hybrid, y=Annual_fuel_cost, fill=hybrid_non_hybrid)) +
+  geom_bar(stat='identity')+
+  scale_fill_manual(values = c('Hybrid'='blue', 'Non-Hybrid'='darkgreen')) +
+  geom_text(aes(label=paste("$", Annual_fuel_cost)),
+            vjust=-0.2) +
+  labs(title = 'Annual fuel cost for the most fuel efficient hybrid and Non-Hybrid vehicle',
+       subtitle='Assuming annual mileage is 12,000 and average gasoline cost is $3.5',
+       x="",
+       y='Annual Fuel Cost (USD)') +
+  annotate("text", x = 0.9, y=2000,
+         label = paste("Difference=$",round(diff(ann_cost$Annual_fuel_cost), 2)), size=5, color = 'blue')
+```
+
+## Most popular vehicle with the dataset and disregard the model years:
+```{r, message=FALSE}
+model<- api_clean %>% 
+  group_by(model, hybrid_non_hybrid) %>% 
+  summarise(total_number = sum(vehicle_count)) %>% 
+  arrange(desc(total_number))
+
+ggplot(model, aes(x=reorder(model, total_number), y=total_number, fill=hybrid_non_hybrid))+
+  geom_bar(stat='identity') +
+  coord_flip()+
+  scale_fill_manual(values = c('Hybrid'='blue', 'Non-Hybrid' = 'brown'))+
+  labs(title = "The most popular vehicle model from 2008-2018",
+       x="Model",
+       y="Number of vehicles")
+```
+
+## Statistical test:
+- Null Hypothesis: There is no difference in MPG between hybrid and Non-Hybrid vehicles
+- Alternative Hypothesis : Hybrid vehicles are significantly better in MPG than Non-hybrid vehicles
+
+```{r, warning=FALSE}
+#We will use one-tailed t-test to compare the data:
+obs<- api_clean %>% 
+  observe(actual_fuel_economy_geotab ~ hybrid_non_hybrid, stat='t', order = c('Hybrid', 'Non-Hybrid'))
+
+null_dis<- api_clean %>% 
+  specify(actual_fuel_economy_geotab ~ hybrid_non_hybrid) %>% 
+  hypothesize(null = 'independence') %>% 
+  generate(reps = 1000, type = 'permute') %>% 
+  calculate(stat = 't', order = c('Hybrid', 'Non-Hybrid'))
+
+p<- get_p_value(null_dis, obs, direction='greater')
+
+visualise(null_dis) +
+  shade_p_value(obs_stat = obs, direction = 'greater')+
+  labs(subtitle = paste("P-value =", p))
+```
+
+- P-value <<0.05 indicates that there is strong evidence to reject the null hypothesis in favor of the alternative hypothesis that hybrid vehicles are statistically better in MPG than Non-hybrid vehicles.
+
+- Conclusion: HEVs are definitely more efficient on MPGs than ICE vehicles. For future research topic, we can also look at HEV environmental impact vs ICE vehicles.
+
+
+
+

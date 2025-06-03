@@ -1,0 +1,63 @@
+---
+title: "recommender system"
+author: "Chi Hang(Philip) Cheung"
+date: "2024-11-22"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+```{r}
+url<- "https://raw.githubusercontent.com/stormwhale/data-mines/refs/heads/main/movieR.csv"
+movie<- read.csv(url)
+
+movie_ratings<- movie[1:16, 2:7] %>% 
+  sapply(function(x) as.numeric(x))
+```
+
+## Create a function that calculates the global baseline estimate
+```{r}
+prediction_rating<- function(row, col){
+  movie_mean<- mean(movie_ratings, na.rm=TRUE)
+  
+  movie_rating_to_avg<- mean(col, na.rm=TRUE)
+  re_movie<- (movie_rating_to_avg - movie_mean)
+  
+  user_rating_to_avg<- mean(row, na.rm=TRUE)
+  re_user<- (user_rating_to_avg - movie_mean)
+  
+  return(movie_mean + re_user + re_movie)
+}
+# preview the working table:
+movie_ratings
+```
+## To run the prediction function to all NA values and add the names and titles of the movies back to the data frame:
+```{r}
+pre_movie<- function(ratings) {
+  for (i in 1:nrow(movie_ratings)){
+    for (j in 1:ncol(movie_ratings)) {
+      if (is.na(movie_ratings[i, j])){
+        movie_ratings[i, j]<- prediction_rating(movie_ratings[i, ], movie_ratings[, j])
+      }
+    }
+  } 
+  return(round(movie_ratings, 1))
+}
+
+pre_rating<- pre_movie(movie_ratings)
+```
+Recombine the critic names to the dataframe:
+```{r}
+final_rating<- cbind(movie[, 1], pre_rating)
+
+colnames(final_rating)[colnames(final_rating)=="V1"] <-"Critic"
+
+final_rating
+```
+
+

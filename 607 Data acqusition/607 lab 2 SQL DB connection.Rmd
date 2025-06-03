@@ -1,0 +1,55 @@
+---
+title: "607 Lab 2 SQL DB connection"
+author: "Chi Hang (Philip) Cheung"
+date: "`r Sys.Date()`"
+output:  pdf_document
+---
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(openintro)
+```
+### Hiding login information:
+```{r info hide}
+library(rstudioapi)
+username<-showPrompt(title='username', message='Enter username:', default="")
+pw<-askForPassword(prompt="Enter password:")
+```
+
+###Forming DB connection
+
+```{r code-chunk-label}
+library(RMySQL)
+mydb <- dbConnect(MySQL(), user=username, password=pw, dbname=username, host="cunydata607sql.mysql.database.azure.com")
+dbListTables(mydb)
+```
+
+### Load the movies table into R dataframe
+```{r}
+#write SQL command:
+df<- dbGetQuery(mydb, "select * from movies")
+df
+```
+### to view the dataframe summary
+```{r}
+df<-df %>%
+  mutate('averageScore'= floor(rowMeans(select(., where(is.numeric)), na.rm=TRUE)))
+df 
+```
+```{r plot}
+library(ggplot2)
+ggplot(df, aes(x = Movies, y = averageScore, color=Movies, fill=Movies, legend=FALSE)) +
+  geom_bar(stat='identity') +
+  labs(title = 'Average ratings from 6 reviews of the 6 popular movies', x='Movie names')+
+  theme(legend.position = 'none')
+```
+
+```{r close connection}
+#dbDisconnect()
+```
+
+## Part 4: Missing data strategy
+There are few approaches that i would take depending on the nature of the miss values.
+First, the proportion of the missing data is more than 50% of the columns total data, i might consider excluding the column from my analysis. Huge amount of missing data sometimes can be more misleading than providing meaningful insights
+Second, if the missing data is small (>20%) and is numerical, i will consider to use simple imputation or mean imputation to fill in the missing data with the column values' mean.
+If the missing data are categorical, it will require addition analysis or even predictive model to try filling in the missing value

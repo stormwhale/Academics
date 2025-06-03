@@ -1,0 +1,95 @@
+---
+title: "Lab 4"
+author: "Chi Hang (Philip) Cheung"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(RMySQL)
+library(ggplot2)
+```
+
+### 1)read csv from db 1
+
+```{r code-chunk-label}
+host<- 'cunydata607sql.mysql.database.azure.com'
+user<-Sys.getenv('user')
+pw<- Sys.getenv('pw')
+conn<- dbConnect(MySQL(),
+                 user=user,
+                 password=pw,
+                 host=host,
+                 dbname=user)
+df<- dbGetQuery(conn, 'select * from delays')
+print(df)
+```
+
+### 2)data tidying
+
+dropping the index column
+
+```{r dropping the index column}
+df<- df %>%
+  subset(select=c(2:8))
+df
+```
+
+### 3)Transform the table into rows = observation and columns = variables only.
+
+pivotlonger
+
+```{r pivot_longer to tidy up the data}
+df1<-pivot_longer(
+    df,
+    cols=c('Los Angeles', 'Phoenix', 'San Diego', 'San Francisco', 'Seattle'),
+    names_to='Destination',
+    values_to='Number of flights')
+df1
+```
+
+```{r}
+ggplot(df1, aes(x=Destination, y= `Number of flights`, fill=Status))+
+  geom_bar(stat='identity', position='dodge') +
+  facet_wrap(~Airline) +
+  theme(
+    axis.text = element_text(size = 6)
+  )
+```
+
+## AM West has the highest On Time flights to Phoenix. This could also be that they have the most flights to Phoenix than Alaska Airline.
+
+### 4)To compute the percentage of delay by location and airline:
+
+```{r}
+df2<- df1 %>%
+  pivot_wider(
+    names_from = Status,
+    values_from =`Number of flights`
+  )
+df2<- df2 %>%
+  rename('Number of On time flights'='On Time', 'Number of Delayed flights' = 'Delayed')
+print(df2)
+```
+
+### 5)Adding a column of percentage of delay
+
+```{r}
+#Adding a column of percentage of delay
+df2<- df2 %>%
+  mutate(`Probability of a delay`=
+           floor(100*`Number of Delayed flights`/(`Number of On time flights`+`Number of Delayed flights`)))
+df2
+```
+
+```{r}
+ggplot(df2, aes(x=Destination, y=`Probability of a delay`, fill = Airline)) +
+  geom_bar(stat='identity', position = 'dodge') +
+  scale_fill_manual(values=c('Alaska'='blue', `AM West`='red'))
+```
+
+### In conclusion, Alaska Airline has a lower overall probability of having a delay in their flights to the destinations mentioned above when compared to AM West. This is especially true for flights to San Francisco.
