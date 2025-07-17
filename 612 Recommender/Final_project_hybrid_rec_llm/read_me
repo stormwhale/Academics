@@ -1,0 +1,2 @@
+1) This project is designed to use a hybrid recommender (content-based and collaborative filtering) integrated with an locally hosted LLM (Gemma3)
+2) It is also wrapped in a flask App for web page interactions.
